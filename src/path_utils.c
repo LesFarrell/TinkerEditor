@@ -86,8 +86,8 @@ WCHAR *absolute_path(const WCHAR *path) {
         DWORD length = GetFullPathNameW(path, capacity, full, NULL);
         if (length > 0 && length < capacity) return full;
         free(full);
-        if (!length || length <= capacity) return NULL;
-        capacity = length;
+        if (!length) return NULL;
+        capacity = (length == capacity) ? capacity + 1 : length;
     }
 }
 
@@ -138,8 +138,8 @@ WCHAR *get_user_config_directory(void) {
         if (length > 0 && length < capacity) break;
         free(appData);
         appData = NULL;
-        if (!length || length <= capacity) return NULL;
-        capacity = length;
+        if (!length) return NULL;
+        capacity = (length == capacity) ? capacity + 1 : length;
     }
     if (!appData) return NULL;
     WCHAR *directory = path_join(appData, L"tinkeredit");

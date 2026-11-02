@@ -1061,11 +1061,21 @@ static LRESULT CALLBACK TabSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         HDC dc = BeginPaint(hwnd, &ps);
         RECT client;
         GetClientRect(hwnd, &client);
+        if (client.right <= 0 || client.bottom <= 0) {
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
 
         /* Draw the strip and every tab into a back buffer: the tabs are
            owner-drawn one at a time, which visibly flickers on-screen. */
         HDC buffer = CreateCompatibleDC(dc);
-        HBITMAP bitmap = CreateCompatibleBitmap(dc, client.right, client.bottom);
+        HBITMAP bitmap = buffer ? CreateCompatibleBitmap(dc, client.right, client.bottom) : NULL;
+        if (!buffer || !bitmap) {
+            if (bitmap) DeleteObject(bitmap);
+            if (buffer) DeleteDC(buffer);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
         HBITMAP oldBitmap = (HBITMAP)SelectObject(buffer, bitmap);
 
         /* The recessed strip behind the tabs, matching the editor's

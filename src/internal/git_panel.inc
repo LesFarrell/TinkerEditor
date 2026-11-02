@@ -145,6 +145,20 @@ static void refresh_git_branches(void) {
     }
 }
 
+/* Git's ref-name rules (see git-check-ref-format(1)) don't forbid a quote
+   character, but every git_panel.inc command below splices a branch/remote/
+   stash name straight into a "..." argument of the parameter string handed
+   to CreateProcessW. A name containing a quote would close that argument
+   early and let the rest of it be parsed as further command-line arguments,
+   so names coming from git's own output (not already quote-checked, unlike
+   the free-text commit/stash messages above) are rejected here first. */
+static int reject_quoted_git_name(const WCHAR *name) {
+    if (!name || !wcschr(name, L'"')) return 0;
+    MessageBoxW(g_hMainWnd, L"That name contains a quotation mark and can't be used safely.",
+                L"Git", MB_OK | MB_ICONWARNING);
+    return 1;
+}
+
 /* Picks a branch with show_choice_dialog(); returns the chosen name (caller
    frees), or NULL if there were none to choose or the user cancelled.
    excludeCurrent leaves out the branch already checked out, for switch,
@@ -328,6 +342,10 @@ static void git_publish_branch(void) {
     }
     WCHAR *remote = pick_git_remote();
     if (!remote) return;
+    if (reject_quoted_git_name(remote) || reject_quoted_git_name(g_gitBranchName)) {
+        free(remote);
+        return;
+    }
     size_t capacity = wcslen(remote) + wcslen(g_gitBranchName) + 48;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -397,6 +415,7 @@ static void git_stash_push_prompt(void) {
 static void git_stash_apply_prompt(void) {
     WCHAR *stash = pick_git_stash(L"Apply Stash", L"Apply");
     if (!stash) return;
+    if (reject_quoted_git_name(stash)) { free(stash); return; }
     size_t capacity = wcslen(stash) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -414,6 +433,7 @@ static void git_stash_pop(void) {
 static void git_stash_drop_prompt(void) {
     WCHAR *stash = pick_git_stash(L"Drop Stash", L"Drop");
     if (!stash) return;
+    if (reject_quoted_git_name(stash)) { free(stash); return; }
     WCHAR prompt[160];
     swprintf(prompt, 160, L"Permanently drop %ls?", stash);
     if (MessageBoxW(g_hMainWnd, prompt, L"Git", MB_YESNO | MB_ICONWARNING) == IDYES) {
@@ -429,6 +449,7 @@ static void git_stash_drop_prompt(void) {
 }
 
 static void git_switch_to_branch(const WCHAR *branch, int remote) {
+    if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 40;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (!parameters) return;
@@ -438,6 +459,7 @@ static void git_switch_to_branch(const WCHAR *branch, int remote) {
 }
 
 static void git_delete_branch(const WCHAR *branch) {
+    if (reject_quoted_git_name(branch)) return;
     size_t promptCapacity = wcslen(branch) + 128;
     WCHAR *prompt = (WCHAR *)malloc(promptCapacity * sizeof(WCHAR));
     if (!prompt) return;
@@ -498,6 +520,7 @@ static void git_new_branch_prompt(void) {
     }
     WCHAR name[128] = L"";
     if (!show_text_input(L"New Branch", L"New branch name:", L"", name, 128) || !name[0]) return;
+    if (reject_quoted_git_name(name)) return;
     size_t capacity = wcslen(name) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -517,6 +540,7 @@ static void git_delete_branch_prompt(void) {
 static void git_merge_prompt(void) {
     WCHAR *branch = pick_git_branch(L"Merge Into Current Branch", L"Merge branch:", L"Merge", 1);
     if (!branch) return;
+    if (reject_quoted_git_name(branch)) { free(branch); return; }
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -530,6 +554,7 @@ static void git_merge_prompt(void) {
 static void git_rebase_prompt(void) {
     WCHAR *branch = pick_git_branch(L"Rebase Onto Branch", L"Rebase onto:", L"Rebase", 1);
     if (!branch) return;
+    if (reject_quoted_git_name(branch)) { free(branch); return; }
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
