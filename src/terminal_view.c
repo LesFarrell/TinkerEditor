@@ -913,7 +913,13 @@ int terminal_view_pretranslate_message(TerminalView *view, const MSG *message) {
 TerminalView *terminal_view_create(HWND parent, int id) {
     TerminalView *view = (TerminalView *)calloc(1, sizeof(*view));
     if (!view) return NULL;
-    view->hwnd = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP,
+    /* SS_NOTIFY: without it, a STATIC control answers WM_NCHITTEST with
+       HTTRANSPARENT, so real mouse clicks fall through to whatever is behind
+       it instead of reaching this window's WM_LBUTTONDOWN - the control
+       still takes focus and keystrokes fine via SetFocus() (the keyboard
+       pane-cycling shortcut, Ctrl+F6, isn't affected), but a user clicking
+       directly on the terminal can't focus or type into it. */
+    view->hwnd = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | SS_NOTIFY,
                                  0, 0, 0, 0, parent, (HMENU)(INT_PTR)id, GetModuleHandleA(NULL), NULL);
     if (!view->hwnd) { free(view); return NULL; }
     view->font = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
