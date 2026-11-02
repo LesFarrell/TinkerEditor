@@ -33,12 +33,6 @@ return {
   { "&File", {
     { "&New", "file.new" },
     { "&Open...", "file.open" },
-    { "Reopen with &Encoding", {
-      { "UTF-&8", "file.reopen_utf8" },
-      { "UTF-16 &LE", "file.reopen_utf16le" },
-      { "UTF-16 &BE", "file.reopen_utf16be" },
-      { "&ANSI (code page {codepage})", "file.reopen_ansi" },
-    } },
     { "&Quick Open in Folder...", "file.quick_open" },
     { "Find in F&older...", "file.find_in_folder" },
     { "Replace in Fol&der...", "file.replace_in_folder" },
@@ -55,6 +49,12 @@ return {
     { "&Close Tab", "file.close_tab" },
     { "&Reopen Closed Tab", "file.reopen_closed_tab" },
     { "Go &Back", "file.go_back" },
+    { "Reopen with &Encoding", {
+      { "UTF-&8", "file.reopen_utf8" },
+      { "UTF-16 &LE", "file.reopen_utf16le" },
+      { "UTF-16 &BE", "file.reopen_utf16be" },
+      { "&ANSI (code page {codepage})", "file.reopen_ansi" },
+    } },
     "-",
     { "Recent &Files", { { list = "recent_files" } } },
     { "Recent Wor&kspaces", { { list = "recent_workspaces" } } },
@@ -113,6 +113,7 @@ return {
     { "Cycle &Panes", "view.cycle_panes" },
     { "Cycle Panes &Backwards", "view.cycle_panes_previous" },
     "-",
+    { "Fon&t...", "view.font" },
     { "&Editor Theme", {
       { "&Light", "view.theme_light" },
       { "&Dark", "view.theme_dark" },
@@ -124,7 +125,6 @@ return {
       { "Custom Preview &CSS...", "view.custom_css" },
       { "C&lear Custom Preview CSS", "view.clear_custom_css" },
     } },
-    { "Fon&t...", "view.font" },
     "-",
     { "Preview on &Left", "view.preview_on_left" },
     { "&Focus Mode", "view.focus_mode" },
@@ -133,16 +133,16 @@ return {
     { "Spell Check &Language...", "view.spell_check_language" },
     { "Document &Outline", "view.outline" },
     { "&File Explorer", "view.file_explorer" },
-    { "&Panels", {
-      { "Output Pa&nel", "view.output_panel" },
-      { "Te&rminal", "view.terminal" },
-      { "&Problems", "view.problems" },
-    } },
     { "Mini&map", "view.minimap" },
     { "Split Editor &Horizontally", "view.split_editor" },
     { "Split Editor &Vertically", "view.split_editor_vertical" },
     { "Show &Document in Split...", "view.split_document" },
     { "&Reset Split Editor", "view.reset_split_editor" },
+    { "&Panels", {
+      { "Output Pa&nel", "view.output_panel" },
+      { "Te&rminal", "view.terminal" },
+      { "&Problems", "view.problems" },
+    } },
     "-",
     { "Show W&hitespace", "view.show_whitespace" },
     { "&Indent Guides", "view.indent_guides" },
@@ -159,12 +159,11 @@ return {
   } },
 
   { "&Tools", {
+    { "Settin&gs...", "tools.settings" },
     { "&Markdown", {
       { "Check Workspace &Links", "tools.markdown_check_workspace_links" },
       { "Find &Backlinks", "tools.markdown_backlinks" },
     } },
-    "-",
-    { "Settin&gs...", "tools.settings" },
   } },
 
   { "&Git", {
@@ -243,6 +242,10 @@ return {
       { "I&mage", "markdown.image" },
       { "&Table", "markdown.table" },
       { "Table &Editor...", "markdown.table_editor" },
+      { "Code Bl&ock", "markdown.code_block" },
+      { "&Footnote", "markdown.footnote" },
+      { "&Horizontal Rule", "markdown.horizontal_rule" },
+      { "&Alert", "markdown.alert" },
       { "Table Row/Colu&mn", {
         { "Insert Row &Above", "markdown.table_row_above" },
         { "Insert Row &Below", "markdown.table_row_below" },
@@ -261,10 +264,6 @@ return {
           { "&Right", "markdown.table_align_right" },
         } },
       } },
-      { "Code Bl&ock", "markdown.code_block" },
-      { "&Footnote", "markdown.footnote" },
-      { "&Horizontal Rule", "markdown.horizontal_rule" },
-      { "&Alert", "markdown.alert" },
     } },
   } },
 

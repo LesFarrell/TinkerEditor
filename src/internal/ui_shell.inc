@@ -376,19 +376,27 @@ static void place_plugin_separator(HMENU menu, WCHAR **parts, int first, int par
    unless their path starts with '/'; an empty path is the list itself. */
 static void append_plugin_list(HMENU menu) {
     int count = plugin_host_command_count();
-    for (int i = 0; i < count; i++) {
-        if (plugin_host_command_is_placed(i)) continue;
-        WCHAR *label = to_wide(plugin_host_command_label(i));
-        if (!label) continue;
-        WCHAR *parts[PLUGIN_LABEL_MAX_PARTS];
-        int fromMenuBar = label[0] == L'/';
-        int partCount = split_plugin_label(label, parts);
-        if (plugin_host_command_is_separator(i)) {
-            if (!(fromMenuBar && partCount > 0)) place_plugin_separator(menu, parts, 0, partCount, NULL);
-        } else if (partCount && !(fromMenuBar && partCount > 1)) {
-            place_plugin_command(menu, parts, 0, partCount, NULL, i);
+    /* Two passes, so a command placed directly here lands above one that
+       opens a submenu, matching the convention add_plugin_menu_items()
+       applies to menu-bar menus. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < count; i++) {
+            if (plugin_host_command_is_placed(i)) continue;
+            WCHAR *label = to_wide(plugin_host_command_label(i));
+            if (!label) continue;
+            WCHAR *parts[PLUGIN_LABEL_MAX_PARTS];
+            int fromMenuBar = label[0] == L'/';
+            int partCount = split_plugin_label(label, parts);
+            int isSeparator = plugin_host_command_is_separator(i);
+            int placedHere = isSeparator ? !(fromMenuBar && partCount > 0)
+                                          : (partCount && !(fromMenuBar && partCount > 1));
+            int opensSubmenu = placedHere && !isSeparator && partCount > 1;
+            if (placedHere && opensSubmenu == (pass == 1)) {
+                if (isSeparator) place_plugin_separator(menu, parts, 0, partCount, NULL);
+                else place_plugin_command(menu, parts, 0, partCount, NULL, i);
+            }
+            free(label);
         }
-        free(label);
     }
 }
 
@@ -484,31 +492,44 @@ static MenuBarEntry *plugin_top_menu(HMENU menuBar, MenuBarEntry *entries, int *
 static void add_plugin_menu_items(HMENU menuBar, MenuBarEntry *entries, int *entryCount, int pluginsListed) {
     /* Names of created top-level menus point into these until the end. */
     WCHAR *copies[PLUGIN_MAX_COMMANDS] = {0};
+    static WCHAR *parts[PLUGIN_MAX_COMMANDS][PLUGIN_LABEL_MAX_PARTS];
+    int partCount[PLUGIN_MAX_COMMANDS] = {0};
+    int fromMenuBar[PLUGIN_MAX_COMMANDS] = {0};
     int count = plugin_host_command_count();
     for (int i = 0; i < count; i++) {
         if (plugin_host_command_is_placed(i)) continue;
         WCHAR *label = copies[i] = to_wide(plugin_host_command_label(i));
         if (!label) continue;
-        int fromMenuBar = label[0] == L'/';
-        WCHAR *parts[PLUGIN_LABEL_MAX_PARTS];
-        int partCount = split_plugin_label(label, parts);
-        if (plugin_host_command_is_separator(i)) {
-            /* A separator's path names only menus: "/Snippets" is the
-               Snippets menu itself. Menus it names must exist already. */
-            if (fromMenuBar && partCount > 0) {
-                MenuBarEntry *entry = find_menu_bar_entry(entries, *entryCount, parts[0]);
-                if (entry) place_plugin_separator(entry->menu, parts, 1, partCount, entry);
-            } else if (!pluginsListed) {
-                MenuBarEntry *entry = find_menu_bar_entry(entries, *entryCount, L"&Plugins");
-                if (entry) place_plugin_separator(entry->menu, parts, 0, partCount, NULL);
+        fromMenuBar[i] = label[0] == L'/';
+        partCount[i] = split_plugin_label(label, parts[i]);
+    }
+    /* Two passes, so a plugin command placed directly in a menu lands above
+       one that opens a submenu there, matching the convention menus.lua
+       follows: single items first, items with submenus at the bottom. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < count; i++) {
+            if (!copies[i]) continue;
+            int isSeparator = plugin_host_command_is_separator(i);
+            int opensSubmenu = !isSeparator && fromMenuBar[i] && partCount[i] > 2;
+            if (opensSubmenu != (pass == 1)) continue;
+            if (isSeparator) {
+                /* A separator's path names only menus: "/Snippets" is the
+                   Snippets menu itself. Menus it names must exist already. */
+                if (fromMenuBar[i] && partCount[i] > 0) {
+                    MenuBarEntry *entry = find_menu_bar_entry(entries, *entryCount, parts[i][0]);
+                    if (entry) place_plugin_separator(entry->menu, parts[i], 1, partCount[i], entry);
+                } else if (!pluginsListed) {
+                    MenuBarEntry *entry = find_menu_bar_entry(entries, *entryCount, L"&Plugins");
+                    if (entry) place_plugin_separator(entry->menu, parts[i], 0, partCount[i], NULL);
+                }
+            /* "/Name" alone has no menu to go on, so it goes with the others. */
+            } else if (fromMenuBar[i] && partCount[i] > 1) {
+                MenuBarEntry *entry = plugin_top_menu(menuBar, entries, entryCount, parts[i][0]);
+                if (entry) place_plugin_command(entry->menu, parts[i], 1, partCount[i], entry, i);
+            } else if (partCount[i] && !pluginsListed) {
+                MenuBarEntry *entry = plugin_top_menu(menuBar, entries, entryCount, L"&Plugins");
+                if (entry) place_plugin_command(entry->menu, parts[i], 0, partCount[i], NULL, i);
             }
-        /* "/Name" alone has no menu to go on, so it goes with the others. */
-        } else if (fromMenuBar && partCount > 1) {
-            MenuBarEntry *entry = plugin_top_menu(menuBar, entries, entryCount, parts[0]);
-            if (entry) place_plugin_command(entry->menu, parts, 1, partCount, entry, i);
-        } else if (partCount && !pluginsListed) {
-            MenuBarEntry *entry = plugin_top_menu(menuBar, entries, entryCount, L"&Plugins");
-            if (entry) place_plugin_command(entry->menu, parts, 0, partCount, NULL, i);
         }
     }
     for (int i = 0; i < count; i++) free(copies[i]);
