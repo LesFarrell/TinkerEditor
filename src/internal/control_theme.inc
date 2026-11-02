@@ -1,3 +1,6 @@
+/* Defined in documents.inc, included after this file. */
+static int document_index_for_view(HWND view);
+
 /* ---- window, menu and title-bar theming ---- */
 
 /* Keeps the WebView2 controller's own background in step with the theme. It
@@ -184,10 +187,15 @@ static void draw_tab_item(const DRAWITEMSTRUCT *dis) {
     int index = (int)dis->itemID;
     if (index < 0 || index >= g_documentStore.count) return;
     int selected = TabCtrl_GetCurSel(g_hTabs) == index;
+    /* The split pane can hold a different document than the main tab
+       selection (Show Document in Split...); while it actually has the
+       keyboard focus, highlight its tab instead. */
+    if (g_splitEditorVisible && g_hSplitEdit && GetFocus() == g_hSplitEdit) {
+        int splitIndex = document_index_for_view(g_hSplitEdit);
+        if (splitIndex >= 0) selected = splitIndex == index;
+    }
     const ThemePalette *p = theme_palette();
-    COLORREF bg = selected ? p->tabSelectedBg : p->tabBg;
-    COLORREF fg = selected ? p->tabSelectedFg : p->tabFg;
-    fill_rect_color(dis->hDC, &dis->rcItem, bg);
+    fill_rect_color(dis->hDC, &dis->rcItem, p->tabBg);
     HPEN borderPen = CreatePen(PS_SOLID, 1, theme_border_color());
     HPEN oldPen = (HPEN)SelectObject(dis->hDC, borderPen);
     MoveToEx(dis->hDC, dis->rcItem.right - 1, dis->rcItem.top + 2, NULL);
@@ -200,11 +208,29 @@ static void draw_tab_item(const DRAWITEMSTRUCT *dis) {
     format_document_label(&g_documentStore.documents[index], label, sizeof(label) / sizeof(label[0]));
     HFONT font = (HFONT)SendMessageW(g_hTabs, WM_GETFONT, 0, 0);
     HFONT oldFont = font ? (HFONT)SelectObject(dis->hDC, font) : NULL;
-    SetTextColor(dis->hDC, fg);
+    SetTextColor(dis->hDC, p->tabFg);
     SetBkMode(dis->hDC, TRANSPARENT);
+    /* Measured without DT_VCENTER first, so the underline below can match
+       the label's actual (possibly ellipsized) width instead of guessing. */
+    RECT labelRect = textRect;
+    DrawTextW(dis->hDC, label, -1, &labelRect,
+              DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_CALCRECT);
     DrawTextW(dis->hDC, label, -1, &textRect,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     if (oldFont) SelectObject(dis->hDC, oldFont);
+
+    if (selected) {
+        int lineHeight = labelRect.bottom - labelRect.top;
+        int textTop = textRect.top + ((textRect.bottom - textRect.top) - lineHeight) / 2;
+        int lineY = textTop + lineHeight + 2;
+        if (lineY > dis->rcItem.bottom - 3) lineY = dis->rcItem.bottom - 3;
+        HPEN underlinePen = CreatePen(PS_SOLID, 2, p->accent);
+        HPEN oldUnderlinePen = (HPEN)SelectObject(dis->hDC, underlinePen);
+        MoveToEx(dis->hDC, labelRect.left, lineY, NULL);
+        LineTo(dis->hDC, labelRect.right, lineY);
+        SelectObject(dis->hDC, oldUnderlinePen);
+        DeleteObject(underlinePen);
+    }
 
     /* tab_close_rectangle() is wider than it is tall (a roomier click
        target), so inset-padding it directly for the X stretched the cross
@@ -221,7 +247,7 @@ static void draw_tab_item(const DRAWITEMSTRUCT *dis) {
     if (pad < 1) pad = 1;
     RECT glyph = { cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2 };
     int padTop = pad + 1, padBottom = pad;
-    HPEN closePen = CreatePen(PS_SOLID, 2, fg);
+    HPEN closePen = CreatePen(PS_SOLID, 2, p->tabFg);
     SelectObject(dis->hDC, closePen);
     if (g_documentStore.documents[index].pinned) {
         /* A compact push-pin in the close-button slot. Pinned tabs have no X

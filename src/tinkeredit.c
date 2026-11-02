@@ -705,7 +705,10 @@ static void handle_editor_ui_update(HWND hwnd, HWND editor, const struct SCNotif
        checking is the exception: an unfocused split pane can still be
        scrolled (mouse wheel, dragging its own scrollbar) without moving
        focus, and the text newly brought into view there needs checking too. */
-    if (GetFocus() == editor) g_lastEditView = editor;
+    if (GetFocus() == editor && g_lastEditView != editor) {
+        g_lastEditView = editor;
+        if (g_hTabs) InvalidateRect(g_hTabs, NULL, FALSE);
+    }
     if (scn->updated & SC_UPDATE_V_SCROLL) schedule_visible_spell_check();
     if (editor != tracked_edit_view()) return;
     /* A secondary document has no relationship to the selected tab's live
@@ -842,7 +845,10 @@ static void handle_editor_notification(HWND hwnd, NMHDR *notification) {
             handle_editor_ui_update(hwnd, notification->hwndFrom, scn);
             break;
         case SCN_CHARADDED:
-            g_lastEditView = notification->hwndFrom;
+            if (g_lastEditView != notification->hwndFrom) {
+                g_lastEditView = notification->hwndFrom;
+                if (g_hTabs) InvalidateRect(g_hTabs, NULL, FALSE);
+            }
             if (document_index_for_view(notification->hwndFrom) == g_documentStore.active)
                 schedule_word_completions(hwnd, notification->hwndFrom);
             break;
