@@ -11,6 +11,11 @@ static void show_plugin_error(const char *report);
    dangling pointer once these functions return. */
 static WCHAR g_statusPartText[4][128];
 
+/* Set while a transient message (show_plugin_reload_status) occupies part 3,
+   so routine refreshes triggered elsewhere (typing, caret moves, tab
+   switches) don't stomp it before its own timer restores the normal text. */
+static int g_statusMessageActive = 0;
+
 /* The status bar deliberately computes from Scintilla's UTF-8 document model:
    character counts are Unicode-aware while columns remain editor columns. */
 /* Ln/Col, encoding, and dirty-status fields only - all O(1) Scintilla
@@ -22,7 +27,7 @@ static void update_status_position(void) {
     if (active_document_is_image()) {
         wcscpy(g_statusPartText[0], L"Image preview");
         g_statusPartText[2][0] = 0;
-        wcscpy(g_statusPartText[3], L"Read only");
+        if (!g_statusMessageActive) wcscpy(g_statusPartText[3], L"Read only");
         InvalidateRect(g_hStatus, NULL, FALSE);
         return;
     }
@@ -43,10 +48,12 @@ static void update_status_position(void) {
         default: wcscpy(encodingName, L"UTF-8"); break;
     }
     swprintf(g_statusPartText[2], 128, L"%ls%ls   %ls", encodingName, g_hasBom ? L" BOM" : L"", eolName);
-    const WCHAR *saveState = !g_dirty ? L"Saved"
-             : g_largeFile ? L"Modified" : L"Modified · recovery enabled";
-    if (g_gitStatusText[0]) swprintf(g_statusPartText[3], 128, L"%ls                              %ls", saveState, g_gitStatusText);
-    else swprintf(g_statusPartText[3], 128, L"%ls", saveState);
+    if (!g_statusMessageActive) {
+        const WCHAR *saveState = !g_dirty ? L"Saved"
+                 : g_largeFile ? L"Modified" : L"Modified · recovery enabled";
+        if (g_gitStatusText[0]) swprintf(g_statusPartText[3], 128, L"%ls                              %ls", saveState, g_gitStatusText);
+        else swprintf(g_statusPartText[3], 128, L"%ls", saveState);
+    }
     InvalidateRect(g_hStatus, NULL, FALSE);
 }
 
@@ -90,6 +97,7 @@ static void show_plugin_reload_status(const WCHAR *text) {
     const size_t capacity = sizeof(g_statusPartText[3]) / sizeof(g_statusPartText[3][0]);
     wcsncpy(g_statusPartText[3], text, capacity - 1);
     g_statusPartText[3][capacity - 1] = 0;
+    g_statusMessageActive = 1;
     InvalidateRect(g_hStatus, NULL, FALSE);
     SetTimer(g_hMainWnd, IDT_PLUGIN_STATUS, PLUGIN_STATUS_DURATION_MS, NULL);
 }

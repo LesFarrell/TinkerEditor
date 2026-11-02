@@ -1024,6 +1024,7 @@ static int handle_main_timer(HWND hwnd, UINT_PTR timerId) {
             break;
         case IDT_PLUGIN_STATUS:
             KillTimer(hwnd, IDT_PLUGIN_STATUS);
+            g_statusMessageActive = 0;
             update_status_position();
             break;
         case IDT_PLUGIN_SELECTION:
