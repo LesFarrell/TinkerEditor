@@ -1205,6 +1205,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             erase_menu_bottom_seam(hwnd);
             return result;
         }
+        /* Regaining focus from another application is the common moment a
+           user has just run git commands (or another git client) outside
+           the editor - refresh the branch/status cache so the panel doesn't
+           keep showing refs that no longer exist. check_external_file_change()
+           already covers edited files via its own poll timer; git has no
+           such watcher, so it's refreshed here instead. */
+        case WM_ACTIVATEAPP:
+            if (wParam) refresh_git_status();
+            break;
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORBTN: {
