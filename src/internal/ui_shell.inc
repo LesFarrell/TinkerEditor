@@ -958,30 +958,36 @@ static void layout_status_bar(HWND hwnd, LayoutArea *area) {
     area->height -= statusHeight;
 }
 
-/* The formatting toolbar and tab strip span the full window width, above
-   both the file explorer panel and the editor/preview - the explorer panel
-   is docked below them, not beside them. The toolbar sits directly under
-   the menu bar, with the tab strip below it. The formatting toolbar edits
-   Markdown source, so it's only useful (and only shown) while the editor
-   pane is visible. */
-static void layout_toolbar_and_tabs(LayoutArea *area) {
+/* The formatting toolbar spans the full window width, above both the file
+   explorer panel and the editor/preview - the explorer panel is docked
+   below it, not beside it. The toolbar sits directly under the menu bar.
+   It edits Markdown source, so it's only useful (and only shown) while the
+   editor pane is visible. */
+static void layout_toolbar(LayoutArea *area) {
     int showToolbar = editor_pane_visible() && !g_focusMode;
     for (int i = 0; i < TOOLBAR_BUTTON_COUNT; i++)
         if (g_hToolbarButtons[i]) ShowWindow(g_hToolbarButtons[i], showToolbar ? SW_SHOW : SW_HIDE);
     int y = showToolbar ? layout_toolbar_at(area->width, 0) : 0;
-    ShowWindow(g_hTabs, g_focusMode ? SW_HIDE : SW_SHOW);
-    if (!g_focusMode) {
-        MoveWindow(g_hTabs, 0, y, area->width, TAB_HEIGHT, TRUE);
-        y += TAB_HEIGHT;
-    }
     area->y = y;
     area->height -= y;
     if (area->height < 0) area->height = 0;
 }
 
+/* The document tab strip, docked above the editor/preview/outline only -
+   not above the file explorer, which spans the full height beside it.
+   Called after layout_explorer() has carved the explorer out of area. */
+static void layout_tabs(LayoutArea *area) {
+    ShowWindow(g_hTabs, g_focusMode ? SW_HIDE : SW_SHOW);
+    if (g_focusMode) return;
+    MoveWindow(g_hTabs, area->x, area->y, area->width, TAB_HEIGHT, TRUE);
+    area->y += TAB_HEIGHT;
+    area->height -= TAB_HEIGHT;
+    if (area->height < 0) area->height = 0;
+}
+
 /* File explorer panel: docked at the left edge of the remaining content
-   area (below the tab strip/toolbar, above the status bar), opposite side
-   from the outline pane. */
+   area (below the toolbar, above the status bar), opposite side from the
+   outline pane. */
 static void layout_explorer(HWND hwnd, LayoutArea *area) {
     if (!g_hExplorerTree || !g_explorerVisible || g_focusMode) {
         g_explorerSplitterRect = (RECT){0, 0, 0, 0};
@@ -1098,8 +1104,9 @@ static void layout(HWND hwnd) {
     LayoutArea area = { 0, 0, rc.right, rc.bottom };
     g_splitterRect = (RECT){0, 0, 0, 0}; /* only the side-by-side layout sets this */
     layout_status_bar(hwnd, &area);
-    layout_toolbar_and_tabs(&area);
+    layout_toolbar(&area);
     layout_explorer(hwnd, &area);
+    layout_tabs(&area);
     layout_output_panel(hwnd, &area);
     layout_outline(hwnd, &area);
     layout_editor_and_preview(hwnd, &area);
