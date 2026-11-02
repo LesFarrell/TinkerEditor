@@ -9,6 +9,11 @@
 
 static int s_ok = 1;
 static char s_lastMessage[256];
+static const char *s_language = "markdown";
+
+static const char *fake_language(void) {
+    return s_language;
+}
 
 static char *read_formatting_source(void) {
     static const WCHAR *const paths[] = {
@@ -215,9 +220,31 @@ static void check_text_command(HWND editor, const char *name, const char *input,
    General Convert commands are tested with the bundled plugins. */
 static void test_text_commands(HWND editor) {
     check_text_command(editor, "edit.trim_whitespace", "a  \nb\t\n  \nc", SC_EOL_LF, "a\nb\n\nc");
+    s_language = "markdown";
     check_text_command(editor, "edit.toggle_comment", "a\nb", SC_EOL_LF, "<!--\na\nb\n-->");
     check_text_command(editor, "edit.toggle_comment", "<!--\na\nb\n-->", SC_EOL_LF, "a\nb");
     check_text_command(editor, "edit.toggle_comment", " <!-- \n\t-->", SC_EOL_CRLF, "");
+
+    s_language = "css";
+    check_text_command(editor, "edit.toggle_comment", "a\nb", SC_EOL_LF, "/*\na\nb\n*/");
+    check_text_command(editor, "edit.toggle_comment", "/*\na\nb\n*/", SC_EOL_LF, "a\nb");
+
+    s_language = "cpp";
+    check_text_command(editor, "edit.toggle_comment", "int a;\nint b;", SC_EOL_LF,
+                       "// int a;\n// int b;");
+    check_text_command(editor, "edit.toggle_comment", "// int a;\n// int b;", SC_EOL_LF,
+                       "int a;\nint b;");
+    check_text_command(editor, "edit.toggle_comment", "  int a;\n\n  int b;", SC_EOL_LF,
+                       "  // int a;\n\n  // int b;");
+
+    s_language = "python";
+    check_text_command(editor, "edit.toggle_comment", "a = 1", SC_EOL_LF, "# a = 1");
+
+    s_language = "lua";
+    check_text_command(editor, "edit.toggle_comment", "local a = 1", SC_EOL_LF, "-- local a = 1");
+    check_text_command(editor, "edit.toggle_comment", "-- local a = 1", SC_EOL_LF, "local a = 1");
+
+    s_language = "markdown";
 }
 
 /* The built-in Markdown and bundled HTML table commands both ask for a size. */
@@ -262,7 +289,7 @@ int main(void) {
     if (!editor) { FreeLibrary(scintilla); return 1; }
 
     static const PluginHostCallbacks callbacks = {
-        .prompt = fake_prompt, .message = record_message
+        .prompt = fake_prompt, .message = record_message, .language = fake_language
     };
     plugin_host_set_callbacks(&callbacks);
     char *code = read_formatting_source();

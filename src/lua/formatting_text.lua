@@ -35,17 +35,17 @@ local function is_comment_delimiter(line, delimiter)
   return trim(line) == delimiter
 end
 
--- Edit > Toggle Comment. Markdown has no line comments, so the selected
--- lines are wrapped in an HTML comment, with <!-- and --> on lines of their
+-- Edit > Toggle Comment, for a language with no line comment syntax: the
+-- selected lines are wrapped in open/close markers, each on a line of their
 -- own, or unwrapped when they are exactly that already.
-local function toggle_comment()
+local function block_comment_toggle(open, close)
   local first, last = selected_lines()
   local blockStart = line_start(first)
   local _, blockEnd = editor.line_range(last)
 
   local isCommented = last > first
-    and is_comment_delimiter(editor.get_line(first), "<!--")
-    and is_comment_delimiter(editor.get_line(last), "-->")
+    and is_comment_delimiter(editor.get_line(first), open)
+    and is_comment_delimiter(editor.get_line(last), close)
 
   local replacement
   if isCommented then
@@ -56,12 +56,91 @@ local function toggle_comment()
     end
   else
     local eol = editor.eol()
-    replacement = "<!--" .. eol .. editor.get_range(blockStart, blockEnd) .. eol .. "-->"
+    replacement = open .. eol .. editor.get_range(blockStart, blockEnd) .. eol .. close
   end
 
   editor.set_selection(blockStart, blockEnd)
   editor.replace_selection(replacement)
   editor.set_selection(blockStart, blockStart + #replacement - 1)
+end
+
+-- Edit > Toggle Comment, for a language with a line comment prefix: blank
+-- lines are left alone, and the lines are considered already commented only
+-- when every non-blank one starts with prefix (after its indent).
+local function prefixed_with_comment(first, last, prefix)
+  local lines = {}
+  for n = first, last do lines[#lines + 1] = editor.get_line(n) end
+
+  local commented = false
+  for _, line in ipairs(lines) do
+    if trim(line) ~= "" then
+      local indent = #line:match("^[ \t]*")
+      commented = line:sub(indent + 1, indent + #prefix) == prefix
+      break
+    end
+  end
+  if commented then
+    for _, line in ipairs(lines) do
+      if trim(line) ~= "" then
+        local indent = #line:match("^[ \t]*")
+        if line:sub(indent + 1, indent + #prefix) ~= prefix then
+          commented = false
+          break
+        end
+      end
+    end
+  end
+
+  local out = {}
+  for i, line in ipairs(lines) do
+    if trim(line) == "" then
+      out[i] = line
+    else
+      local indent = line:match("^[ \t]*")
+      if commented then
+        local rest = line:sub(#indent + #prefix + 1)
+        if rest:sub(1, 1) == " " then rest = rest:sub(2) end
+        out[i] = indent .. rest
+      else
+        out[i] = indent .. prefix .. " " .. line:sub(#indent + 1)
+      end
+    end
+  end
+  return table.concat(out, editor.eol())
+end
+
+local function line_comment_toggle(prefix)
+  local first, last = selected_lines()
+  replace_lines(first, last, prefixed_with_comment(first, last, prefix))
+end
+
+-- Line comment prefix for each language editor.language() can report that
+-- has one. Languages left out (markdown, json, xml, hypertext, css, text,
+-- and anything unrecognized) fall back to a wrapped block comment instead.
+local LINE_COMMENT_PREFIX = {
+  cpp = "//", python = "#", bash = "#", powershell = "#", lua = "--",
+  sql = "--", yaml = "#", toml = "#", makefile = "#", props = "#",
+  inno = ";", batch = "REM",
+}
+
+-- Block comment open/close for languages that need something other than
+-- the default HTML-style comment (Markdown, XML/HTML, JSON, plain text).
+local BLOCK_COMMENT_DELIMITERS = {
+  css = { "/*", "*/" },
+}
+
+local DEFAULT_BLOCK_COMMENT = { "<!--", "-->" }
+
+-- Edit > Toggle Comment: picks a line or block comment style to match the
+-- active document's language (see editor_language.c).
+local function toggle_comment()
+  local prefix = LINE_COMMENT_PREFIX[editor.language()]
+  if prefix then
+    line_comment_toggle(prefix)
+    return
+  end
+  local delimiters = BLOCK_COMMENT_DELIMITERS[editor.language()] or DEFAULT_BLOCK_COMMENT
+  block_comment_toggle(delimiters[1], delimiters[2])
 end
 
 -- ---- registration ----
