@@ -14,23 +14,20 @@ extern int g_explorerVisible;
 extern int g_explorerWidth;
 /* Persisted permille of the client width, like g_splitterRatio. */
 extern int g_explorerWidthRatio;
-/* Persisted flag: docked at the right edge instead of the left. */
-extern int g_explorerOnRight;
 
-/* The pixel x-offset everything right of the explorer panel is shifted by -
-   the panel's width plus its splitter, when it's docked at the left and
-   occupying space; 0 otherwise (hidden, focus mode, not created yet, or
-   docked at the right instead, where nothing to its right needs shifting).
-   layout() derives this inline; other call sites that need the same value
-   once it has settled (the main splitter's hit-testing/drag math) call this
-   instead of re-deriving it, so they cannot drift out of sync with where the
-   panel actually is. */
+/* The pixel x-offset everything right of the explorer panel (always docked
+   at the left) is shifted by - the panel's width plus its splitter, when
+   it's occupying space; 0 otherwise (hidden, focus mode, or not created
+   yet). Also includes the Git panel's width when that one is currently
+   docked at the left too. layout() derives this inline; other call sites
+   that need the same value once it has settled (the main splitter's
+   hit-testing/drag math) call this instead of re-deriving it, so they
+   cannot drift out of sync with where the panels actually are. */
 int explorer_content_x(int focusModeActive);
-/* The total width (panel plus its splitter) the explorer occupies, on
-   whichever side it's docked - 0 when it isn't occupying space. Unlike
-   explorer_content_x(), this doesn't depend on which side it's on; callers
-   that need to know how much of the client width the panel has claimed
-   (rather than where its own content starts) use this instead. */
+/* The explorer's own occupied width (panel plus its splitter) - 0 when it
+   isn't occupying space. Unlike explorer_content_x(), this doesn't include
+   the Git panel's; callers that need to know how much of the client width
+   the explorer alone has claimed use this instead. */
 int explorer_panel_width(int focusModeActive);
 
 /* Same shape of state for the Git panel (git_panel.inc), which docks at

@@ -24,6 +24,7 @@ static WCHAR *g_gitBranchesWorkspace;
 /* The Git panel's own header buttons (its window is created further down,
    in "the Git panel's own window"). */
 static HWND g_hGitRefresh, g_hGitCommit, g_hGitStageAll, g_hGitClose;
+static HWND g_hGitCommitMessage, g_hGitCommitPush;
 
 static void clear_git_branch_cache(void) {
     free_branch_list(g_gitLocalBranches, g_gitLocalBranchCount);
@@ -292,28 +293,71 @@ static void git_discard_all(void) {
     refresh_git_status();
 }
 
-static void git_commit_prompt(void) {
+static void show_git_panel(void); /* defined further down, with the rest of the panel's own window */
+
+/* A fresh, uniquely-named path under the temp directory for a commit
+   message file, or NULL. git_commit() deletes it once the commit that reads
+   it finishes - see g_gitCommitTempFile in output_panel.inc's
+   handle_output_chunk() - not right after starting that (still-running)
+   process, the same temp-file pattern debugger.inc's own
+   debug_temporary_path() uses. */
+static WCHAR *git_commit_message_temp_path(void) {
+    WCHAR temporaryDirectory[MAX_PATH];
+    DWORD length = GetTempPathW(MAX_PATH, temporaryDirectory);
+    if (!length || length >= MAX_PATH) return NULL;
+    WCHAR name[96];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"tinkeredit-commit-%lu-%llu.txt",
+             GetCurrentProcessId(), (unsigned long long)GetTickCount64());
+    return path_join(temporaryDirectory, name);
+}
+
+/* Commits whatever's typed into the panel's own commit message box, as a
+   file (`git commit -F`) rather than `-m "..."` - unlike the old modal
+   prompt this replaced, that handles a multi-line message or one containing
+   a quotation mark without complaint. andPush also pushes once the commit
+   succeeds (see g_gitPushAfterCommit, consumed in output_panel.inc's
+   handle_output_chunk()). The box is cleared once the commit is queued, not
+   once it's known to succeed - simplest, and the message stays visible in
+   the Run tab's own output if it's rejected. */
+static void git_commit(int andPush) {
     if (!g_currentWorkspaceFolder) {
         MessageBoxW(g_hMainWnd, L"Open a workspace folder to commit.", L"Git", MB_OK | MB_ICONINFORMATION);
         return;
     }
-    WCHAR message[512] = L"";
-    if (!show_text_input(L"Commit", L"Commit message:", L"", message, 512) || !message[0]) return;
-    if (wcschr(message, L'"')) {
-        MessageBoxW(g_hMainWnd, L"Commit messages can't contain a quotation mark.",
-                    L"Git", MB_OK | MB_ICONWARNING);
+    if (!g_gitPanelVisible) show_git_panel();
+    Sci_Position length = 0;
+    char *message = get_edit_text(g_hGitCommitMessage, &length);
+    if (!message || !length) {
+        MessageBoxW(g_hMainWnd, L"Enter a commit message first.", L"Git", MB_OK | MB_ICONINFORMATION);
+        free(message);
+        if (g_hGitCommitMessage) SetFocus(g_hGitCommitMessage);
         return;
     }
-    size_t capacity = wcslen(message) + 32;
+    WCHAR *tempFile = git_commit_message_temp_path();
+    if (!tempFile || !write_file_atomic(tempFile, message, (size_t)length, TEXT_ENCODING_UTF8, 0)) {
+        MessageBoxW(g_hMainWnd, L"Could not write the commit message to a temporary file.",
+                    L"Git", MB_OK | MB_ICONWARNING);
+        free(message);
+        free(tempFile);
+        return;
+    }
+    free(message);
+    size_t capacity = wcslen(tempFile) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
-    if (!parameters) return;
-    swprintf(parameters, capacity, L"commit -m \"%ls\"", message);
+    if (!parameters) { DeleteFileW(tempFile); free(tempFile); return; }
+    swprintf(parameters, capacity, L"commit -F \"%ls\"", tempFile);
+    g_gitCommitTempFile = tempFile;
+    g_gitPushAfterCommit = andPush;
+    SendMessageA(g_hGitCommitMessage, SCI_CLEARALL, 0, 0);
     /* Commit hooks and signing can take time or require user attention, so a
        commit belongs on the cancellable Run tab rather than in the modal
        quick-command runner. */
-    run_git_mutating_output(parameters, L"Git Commit");
+    run_git_mutating_output(parameters, andPush ? L"Git Commit & Push" : L"Git Commit");
     free(parameters);
 }
+
+static void git_commit_prompt(void) { git_commit(0); }
+static void git_commit_and_push_prompt(void) { git_commit(1); }
 
 /* push/pull/fetch/merge/rebase/switch/branch run visibly on the Run tab,
    since they can be slow or need the user's attention; this flags the run so
@@ -1118,28 +1162,73 @@ static LRESULT git_tree_customdraw(NMTVCUSTOMDRAW *draw) {
    positioned by layout_git_panel() below rather than as one more tab inside
    output_panel.inc's shared host. */
 
+/* header: the Close button's row, above the message box. commitRow: the
+   Commit/Commit & Push row, below the message box. footer: the
+   Refresh/Stage All row, at the bottom. message and tree are the two
+   bordered content rects paint_git_panel() frames. */
+typedef struct GitPanelLayout {
+    int pad, header, row;
+    RECT message, commitRow, tree, footer;
+} GitPanelLayout;
+
+static GitPanelLayout git_panel_layout(HWND panel) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    int dpi = GetDpiForWindow(panel);
+    GitPanelLayout layout;
+    layout.pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
+    layout.header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
+    layout.row = layout.header - layout.pad;
+    int messageHeight = MulDiv(GIT_COMMIT_MESSAGE_HEIGHT, dpi, 96);
+    layout.message = (RECT){ layout.pad, layout.header, rc.right - layout.pad,
+                             layout.header + messageHeight };
+    int commitTop = layout.message.bottom + layout.pad;
+    layout.commitRow = (RECT){ layout.pad, commitTop, rc.right - layout.pad, commitTop + layout.row };
+    int footerTop = rc.bottom - layout.pad - layout.row;
+    layout.footer = (RECT){ layout.pad, footerTop, rc.right - layout.pad, footerTop + layout.row };
+    layout.tree = (RECT){ layout.pad, layout.commitRow.bottom + layout.pad,
+                          rc.right - layout.pad, footerTop - layout.pad };
+    if (layout.tree.right < layout.tree.left) layout.tree.right = layout.tree.left;
+    if (layout.tree.bottom < layout.tree.top) layout.tree.bottom = layout.tree.top;
+    return layout;
+}
+
 static void size_git_panel(HWND panel) {
     RECT rc;
     GetClientRect(panel, &rc);
     int dpi = GetDpiForWindow(panel);
-    int pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
-    int header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
-    int row = header - pad;
+    GitPanelLayout layout = git_panel_layout(panel);
     int closeWidth = MulDiv(DEBUG_CLOSE_BUTTON_WIDTH, dpi, 96);
-    int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
-    HWND buttons[] = { g_hGitClose, g_hGitCommit, g_hGitStageAll, g_hGitRefresh };
-    int widths[] = { closeWidth, buttonWidth, buttonWidth, buttonWidth };
-    int x = rc.right;
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
-        x -= pad + widths[i];
-        MoveWindow(buttons[i], x, pad / 2, widths[i], row, TRUE);
-        InvalidateRect(buttons[i], NULL, TRUE);
-    }
-    RECT content = { pad, header, rc.right - pad, rc.bottom - pad };
-    if (content.right < content.left) content.right = content.left;
-    if (content.bottom < content.top) content.bottom = content.top;
-    MoveWindow(g_hGitTree, content.left + 1, content.top + 1,
-              content.right - content.left - 2, content.bottom - content.top - 2, TRUE);
+    MoveWindow(g_hGitClose, rc.right - layout.pad - closeWidth, layout.pad / 2,
+              closeWidth, layout.row, TRUE);
+    InvalidateRect(g_hGitClose, NULL, TRUE);
+    MoveWindow(g_hGitCommitMessage, layout.message.left + 1, layout.message.top + 1,
+              layout.message.right - layout.message.left - 2,
+              layout.message.bottom - layout.message.top - 2, TRUE);
+    int commitWidth = (layout.commitRow.right - layout.commitRow.left - layout.pad) / 2;
+    if (commitWidth < 0) commitWidth = 0;
+    MoveWindow(g_hGitCommit, layout.commitRow.left, layout.commitRow.top, commitWidth, layout.row, TRUE);
+    MoveWindow(g_hGitCommitPush, layout.commitRow.left + commitWidth + layout.pad, layout.commitRow.top,
+              layout.commitRow.right - (layout.commitRow.left + commitWidth + layout.pad), layout.row, TRUE);
+    InvalidateRect(g_hGitCommit, NULL, TRUE);
+    InvalidateRect(g_hGitCommitPush, NULL, TRUE);
+    MoveWindow(g_hGitTree, layout.tree.left + 1, layout.tree.top + 1,
+              layout.tree.right - layout.tree.left - 2, layout.tree.bottom - layout.tree.top - 2, TRUE);
+    int footerWidth = (layout.footer.right - layout.footer.left - layout.pad) / 2;
+    if (footerWidth < 0) footerWidth = 0;
+    MoveWindow(g_hGitRefresh, layout.footer.left, layout.footer.top, footerWidth, layout.row, TRUE);
+    MoveWindow(g_hGitStageAll, layout.footer.left + footerWidth + layout.pad, layout.footer.top,
+              layout.footer.right - (layout.footer.left + footerWidth + layout.pad), layout.row, TRUE);
+    InvalidateRect(g_hGitRefresh, NULL, TRUE);
+    InvalidateRect(g_hGitStageAll, NULL, TRUE);
+}
+
+static void apply_git_panel_font(const char *faceUtf8) {
+    if (!g_hGitCommitMessage) return;
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETFONT, STYLE_DEFAULT, (LPARAM)faceUtf8);
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETSIZE, STYLE_DEFAULT, g_fontPointSize);
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETWEIGHT, STYLE_DEFAULT, g_fontWeight);
+    apply_output_view_theme(g_hGitCommitMessage); /* its STYLECLEARALL spreads the font */
 }
 
 static void apply_git_panel_theme(void) {
@@ -1150,7 +1239,8 @@ static void apply_git_panel_theme(void) {
     themed_scrollbar_refresh(g_hGitTree);
     InvalidateRect(g_hGitTree, NULL, TRUE);
     if (g_hGitPanel) InvalidateRect(g_hGitPanel, NULL, TRUE);
-    HWND buttons[] = { g_hGitRefresh, g_hGitStageAll, g_hGitCommit, g_hGitClose };
+    apply_output_view_theme(g_hGitCommitMessage);
+    HWND buttons[] = { g_hGitRefresh, g_hGitStageAll, g_hGitCommit, g_hGitCommitPush, g_hGitClose };
     for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
         if (buttons[i]) InvalidateRect(buttons[i], NULL, TRUE);
 }
@@ -1159,11 +1249,9 @@ static void paint_git_panel(HWND panel, HDC hdc) {
     RECT rc;
     GetClientRect(panel, &rc);
     fill_rect_color(hdc, &rc, theme_bg_color());
-    int dpi = GetDpiForWindow(panel);
-    int pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
-    int header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
-    RECT content = { pad, header, rc.right - pad, rc.bottom - pad };
-    frame_rect(hdc, &content, theme_border_color());
+    GitPanelLayout layout = git_panel_layout(panel);
+    frame_rect(hdc, &layout.message, theme_border_color());
+    frame_rect(hdc, &layout.tree, theme_border_color());
 }
 
 static void hide_git_panel(void);
@@ -1196,6 +1284,7 @@ static LRESULT CALLBACK GitPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
                 case ID_GIT_REFRESH: refresh_git_status(); return 0;
                 case ID_GIT_STAGE_ALL: git_stage_all(); return 0;
                 case ID_GIT_COMMIT: git_commit_prompt(); return 0;
+                case ID_GIT_COMMIT_PUSH: git_commit_and_push_prompt(); return 0;
                 case ID_GIT_CLOSE: hide_git_panel(); return 0;
             }
             break;
@@ -1253,16 +1342,37 @@ static void create_git_panel(HWND hwnd) {
     themed_scrollbar_attach(g_hGitTree, THEMED_SCROLL_TREEVIEW);
     g_hGitRefresh = create_output_button(g_hGitPanel, L"Refresh", ID_GIT_REFRESH);
     g_hGitStageAll = create_output_button(g_hGitPanel, L"Stage All", ID_GIT_STAGE_ALL);
-    g_hGitCommit = create_output_button(g_hGitPanel, L"Commit...", ID_GIT_COMMIT);
     g_hGitClose = create_output_button(g_hGitPanel, L"X", ID_GIT_CLOSE);
+    /* The commit message box: a plain multi-line Scintilla, the same way
+       the output panel's own input line is one, but wrapped (a commit
+       message is prose, not a single command) and with its own scrollbar
+       since a long message can run past the box's fixed height. */
+    g_hGitCommitMessage = create_output_scintilla(g_hGitPanel, ID_GIT_COMMIT_MESSAGE, 1);
+    SendMessageA(g_hGitCommitMessage, SCI_SETWRAPMODE, SC_WRAP_WORD, 0);
+    SendMessageA(g_hGitCommitMessage, SCI_SETHSCROLLBAR, FALSE, 0);
+    themed_scrollbar_attach(g_hGitCommitMessage, THEMED_SCROLL_SCINTILLA);
+    g_hGitCommit = create_output_button(g_hGitPanel, L"Commit", ID_GIT_COMMIT);
+    /* A literal "&", not the usual menu-style "&&" escape: this button's
+       caption is drawn with DT_NOPREFIX (see draw_debug_panel_button()), so
+       nothing un-escapes an "&&" here the way a real menu item would. */
+    g_hGitCommitPush = create_output_button(g_hGitPanel, L"Commit & Push", ID_GIT_COMMIT_PUSH);
     ShowWindow(g_hGitPanel, g_gitPanelVisible ? SW_SHOW : SW_HIDE);
-    /* Applied here, not left to apply_output_panel_theme()'s call into
-       apply_git_panel_theme(): create_output_panel() (which makes that call)
-       runs before create_git_panel(), so g_hGitTree wouldn't exist yet and
-       the panel would start in the system's default colours until the next
-       theme change. Mirrors explorer_init()'s own explorer_apply_theme()
-       call in file_explorer.c for the same reason. */
+    /* Applied here, not left to apply_output_panel_theme()'s/
+       apply_editor_font()'s own calls into apply_git_panel_theme()/
+       apply_git_panel_font(): those run from create_output_panel() and
+       tinkeredit.c's startup sequence, both before create_git_panel() (and
+       before g_hEdit exists, so apply_editor_font() can't just be called
+       early either), so the panel would start in the system's default
+       colours and font until the next theme change or font edit. Mirrors
+       explorer_init()'s own explorer_apply_theme() call in file_explorer.c
+       for the same reason. */
     apply_git_panel_theme();
+    char *faceUtf8 = to_utf8(g_fontFaceName);
+    if (!faceUtf8) faceUtf8 = _strdup("Consolas");
+    if (faceUtf8) {
+        apply_git_panel_font(faceUtf8);
+        free(faceUtf8);
+    }
 }
 
 /* The Git panel docks at the left or right edge, exactly like the file

@@ -605,7 +605,6 @@ static int command_state(UINT id, CommandState *state) {
         case IDM_VIEW_SPELL_CHECK: STATE_CHECK(g_spellCheckEnabled); state->enabled = g_spellChecker != NULL; break;
         case IDM_VIEW_OUTLINE: STATE_CHECK(g_outlineVisible); break;
         case IDM_VIEW_EXPLORER: STATE_CHECK(g_explorerVisible); break;
-        case IDM_VIEW_EXPLORER_ON_RIGHT: STATE_CHECK(g_explorerOnRight); break;
         case IDM_VIEW_GIT: STATE_CHECK(g_gitPanelVisible); break;
         case IDM_VIEW_GIT_ON_RIGHT: STATE_CHECK(g_gitPanelOnRight); break;
         case IDM_VIEW_OUTPUT_PANEL: STATE_CHECK(g_outputPanelVisible); break;
@@ -1018,8 +1017,9 @@ static void layout_tabs(LayoutArea *area) {
     if (area->height < 0) area->height = 0;
 }
 
-/* File explorer panel: docked at the left or right edge of the remaining
-   content area (below the toolbar, above the status bar), per g_explorerOnRight. */
+/* File explorer panel: docked at the left edge of the remaining content
+   area (below the toolbar, above the status bar), opposite side from the
+   outline pane. */
 static void layout_explorer(HWND hwnd, LayoutArea *area) {
     if (!g_hExplorerTree || !g_explorerVisible || g_focusMode) {
         g_explorerSplitterRect = (RECT){0, 0, 0, 0};
@@ -1033,21 +1033,13 @@ static void layout_explorer(HWND hwnd, LayoutArea *area) {
     int maxWidth = area->width * 2 / 3;
     if (g_explorerWidth < minWidth) g_explorerWidth = minWidth;
     if (maxWidth > minWidth && g_explorerWidth > maxWidth) g_explorerWidth = maxWidth;
-    if (g_explorerOnRight) {
-        int explorerX = area->x + area->width - g_explorerWidth;
-        g_explorerSplitterRect = (RECT){ explorerX - SPLITTER_WIDTH, area->y,
-                                         explorerX, area->y + area->height };
-        MoveWindow(g_hExplorerTree, explorerX, area->y, g_explorerWidth, area->height, TRUE);
-        area->width -= g_explorerWidth + SPLITTER_WIDTH;
-    } else {
-        g_explorerSplitterRect = (RECT){ area->x + g_explorerWidth, area->y,
-                                         area->x + g_explorerWidth + SPLITTER_WIDTH, area->y + area->height };
-        MoveWindow(g_hExplorerTree, area->x, area->y, g_explorerWidth, area->height, TRUE);
-        area->x += g_explorerWidth + SPLITTER_WIDTH;
-        area->width -= g_explorerWidth + SPLITTER_WIDTH;
-    }
-    if (area->width < 0) area->width = 0;
+    g_explorerSplitterRect = (RECT){ area->x + g_explorerWidth, area->y,
+                                     area->x + g_explorerWidth + SPLITTER_WIDTH, area->y + area->height };
+    MoveWindow(g_hExplorerTree, area->x, area->y, g_explorerWidth, area->height, TRUE);
     ShowWindow(g_hExplorerTree, SW_SHOW);
+    area->x += g_explorerWidth + SPLITTER_WIDTH;
+    area->width -= g_explorerWidth + SPLITTER_WIDTH;
+    if (area->width < 0) area->width = 0;
 }
 
 /* The output panel docks under the editor, preview and outline (a splitter
@@ -1222,11 +1214,6 @@ static void toggle_panel_sides(HWND hwnd) {
         g_splitterPos = contentWidth - SPLITTER_WIDTH - g_splitterPos;
     }
     g_previewOnLeft = !g_previewOnLeft;
-    relayout_and_save(hwnd);
-}
-
-static void toggle_explorer_side(HWND hwnd) {
-    g_explorerOnRight = !g_explorerOnRight;
     relayout_and_save(hwnd);
 }
 

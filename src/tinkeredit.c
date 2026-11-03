@@ -1107,18 +1107,9 @@ static void update_splitter_drag(HWND hwnd, int x, int y) {
     if (g_dragging && contentX != g_splitterPos) {
         g_splitterPos = contentX;
         positionChanged = 1;
-    } else if (g_draggingExplorer) {
-        /* Docked at the right, the panel's right edge stays put while its
-           left edge (the splitter) follows the mouse - mirroring the output
-           panel's bottom-stays-put drag below. Docked at the left, its own
-           left edge is pinned at 0, so the width is just the mouse x. */
-        int width = g_explorerOnRight
-            ? g_explorerSplitterRect.right + g_explorerWidth - x - SPLITTER_WIDTH / 2
-            : x;
-        if (width != g_explorerWidth) {
-            g_explorerWidth = width;
-            positionChanged = 1;
-        }
+    } else if (g_draggingExplorer && x != g_explorerWidth) {
+        g_explorerWidth = x;
+        positionChanged = 1;
     } else if (g_draggingGitPanel) {
         int width;
         if (g_gitPanelOnRight) {

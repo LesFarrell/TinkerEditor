@@ -174,7 +174,6 @@ void load_layout_settings(void) {
        only have a ratio, which layout() still uses when this key is absent. */
     int explorerWidth = read_profile_int(L"View", L"ExplorerWidth", -1, path);
     g_explorerWidth = explorerWidth > 0 ? explorerWidth : -1;
-    g_explorerOnRight = read_profile_int(L"View", L"ExplorerOnRight", 0, path) != 0;
     g_gitPanelVisible = read_profile_int(L"View", L"GitPanelVisible", 0, path) != 0;
     int gitPanelWidth = read_profile_int(L"View", L"GitPanelWidth", -1, path);
     g_gitPanelWidth = gitPanelWidth > 0 ? gitPanelWidth : -1;
@@ -261,7 +260,6 @@ void save_layout_settings(void) {
     write_profile_int(L"View", L"ExplorerWidthRatio", g_explorerWidthRatio, path);
     if (g_explorerWidth > 0)
         write_profile_int(L"View", L"ExplorerWidth", g_explorerWidth, path);
-    write_profile_int(L"View", L"ExplorerOnRight", g_explorerOnRight, path);
     write_profile_int(L"View", L"GitPanelVisible", g_gitPanelVisible, path);
     if (g_gitPanelWidth > 0)
         write_profile_int(L"View", L"GitPanelWidth", g_gitPanelWidth, path);

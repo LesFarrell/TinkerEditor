@@ -76,6 +76,8 @@ static WCHAR *g_gitStatusWorkspace;
 static void render_git_panel(void);
 static void git_stage_all(void);
 static void git_commit_prompt(void);
+static void git_commit_and_push_prompt(void);
+static void git_push(void);
 static void shutdown_git_panel(void);
 static void handle_git_tree_delete_item(NMTREEVIEWW *info);
 static void handle_git_tree_item_changed(NMTVITEMCHANGE *change);
@@ -203,6 +205,7 @@ static void apply_debug_tab_theme(void) {
 
 /* Implemented in git_panel.inc, included later in the unity build. */
 static void apply_git_panel_theme(void);
+static void apply_git_panel_font(const char *faceUtf8);
 
 static void apply_output_panel_theme(void) {
     if (!g_hOutputPanel) return;
@@ -238,6 +241,7 @@ static void apply_output_panel_font(const char *faceUtf8) {
         apply_output_view_theme(views[i]); /* its STYLECLEARALL spreads the font */
     }
     terminal_view_apply_font(g_terminalView, faceUtf8, g_fontPointSize, g_fontWeight);
+    apply_git_panel_font(faceUtf8);
 }
 
 /* The Stop button and the tab labels follow what's running. */
@@ -730,6 +734,13 @@ static int g_gitSyncSession;
 static int g_gitSyncDone;
 static DWORD g_gitSyncExitCode;
 static int g_gitRunPending; /* the Run tab's current command mutates the repo; refresh status when it finishes */
+/* Set by git_commit_prompt()/git_commit_and_push_prompt() (git_panel.inc):
+   the temp file holding the commit message passed to `git commit -F`, so it
+   can be deleted once the run finishes rather than right after starting it
+   (the process reads it asynchronously). */
+static WCHAR *g_gitCommitTempFile;
+/* Set alongside it: push once the commit that's currently running succeeds. */
+static int g_gitPushAfterCommit;
 
 static void handle_git_sync_chunk(OutputChunk *chunk) {
     if (chunk->session == g_gitSyncSession && !g_gitSyncDone) {
@@ -958,7 +969,15 @@ static void handle_output_chunk(OutputChunk *chunk) {
             update_output_controls();
             if (g_gitRunPending) {
                 g_gitRunPending = 0;
+                if (g_gitCommitTempFile) {
+                    DeleteFileW(g_gitCommitTempFile);
+                    free(g_gitCommitTempFile);
+                    g_gitCommitTempFile = NULL;
+                }
                 refresh_git_status();
+                int pushAfterCommit = g_gitPushAfterCommit;
+                g_gitPushAfterCommit = 0;
+                if (pushAfterCommit && !failed) git_push();
             }
         }
     }

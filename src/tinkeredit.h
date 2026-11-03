@@ -40,6 +40,8 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define ID_GIT_PANEL 127
 #define ID_GIT_TREE 128
 #define ID_GIT_CLOSE 129
+#define ID_GIT_COMMIT_MESSAGE 130
+#define ID_GIT_COMMIT_PUSH 131
 
 /* ---- timer IDs ---- */
 #define IDT_PREVIEW_UPDATE 1
@@ -132,6 +134,7 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
    see g_gitPanelOnRight. */
 #define GIT_PANEL_WIDTH 280         /* until the user drags its splitter */
 #define GIT_PANEL_MIN_WIDTH 180
+#define GIT_COMMIT_MESSAGE_HEIGHT 72 /* the commit message box, a few lines tall */
 
 /* Larger custom preview stylesheets are refused rather than loaded. */
 #define CUSTOM_CSS_MAX_BYTES (4 * 1024 * 1024)

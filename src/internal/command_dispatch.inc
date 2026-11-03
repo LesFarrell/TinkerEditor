@@ -280,9 +280,6 @@ static int handle_view_command(HWND hwnd, WORD cmd) {
         case IDM_VIEW_EXPLORER:
             toggle_explorer_panel(hwnd);
             break;
-        case IDM_VIEW_EXPLORER_ON_RIGHT:
-            toggle_explorer_side(hwnd);
-            break;
         case IDM_VIEW_OUTPUT_PANEL:
             toggle_output_panel();
             break;
@@ -368,6 +365,7 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_UNSTAGE_ALL: git_unstage_all(); break;
         case IDM_GIT_DISCARD_ALL: git_discard_all(); break;
         case IDM_GIT_COMMIT: git_commit_prompt(); break;
+        case IDM_GIT_COMMIT_AND_PUSH: git_commit_and_push_prompt(); break;
         case IDM_GIT_PUSH: git_push(); break;
         case IDM_GIT_PULL: git_pull(); break;
         case IDM_GIT_FETCH: git_fetch(); break;
