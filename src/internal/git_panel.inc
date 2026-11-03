@@ -915,7 +915,7 @@ static HTREEITEM git_tree_item_at_message_pos(HWND tree, POINT *screenOut, UINT 
    the top of the message loop. */
 static WCHAR *g_gitPendingActionPath;
 static WCHAR g_gitPendingActionMark;
-static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff */
+static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff, 10 log, 11 blame */
 
 static void queue_git_panel_action(int action, const WCHAR *path, WCHAR mark) {
     WCHAR *copy = _wcsdup(path);
@@ -943,6 +943,8 @@ static void run_pending_git_panel_action(void) {
         case 7: git_diff_panel_file(path, GIT_DIFF_STAGED); break;
         case 8: git_switch_to_branch(path, 1); break;
         case 9: git_diff_panel_file(path, GIT_DIFF_UNTRACKED); break;
+        case 10: git_log_panel_file(path); break;
+        case 11: git_blame_panel_file(path); break;
         default: git_stage_file(path); break; /* also how a conflict's resolution is marked */
     }
     free(path);
@@ -980,7 +982,8 @@ static void handle_git_tree_item_changed(NMTVITEMCHANGE *change) {
         queue_git_panel_action(1, node->path, 0);
 }
 
-enum { GIT_CTX_STAGE = 1, GIT_CTX_UNSTAGE, GIT_CTX_DISCARD, GIT_CTX_DIFF, GIT_CTX_SWITCH, GIT_CTX_DELETE_BRANCH };
+enum { GIT_CTX_STAGE = 1, GIT_CTX_UNSTAGE, GIT_CTX_DISCARD, GIT_CTX_DIFF, GIT_CTX_SWITCH, GIT_CTX_DELETE_BRANCH,
+       GIT_CTX_LOG, GIT_CTX_BLAME };
 
 static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPoint) {
     if (!item) return;
@@ -1007,12 +1010,20 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
         AppendMenuW(menu, MF_STRING, GIT_CTX_UNSTAGE, L"Unstage");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, GIT_CTX_DIFF, L"Open Diff");
+        if (mark != L'?') {
+            AppendMenuW(menu, MF_STRING, GIT_CTX_LOG, L"Show File History");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_BLAME, L"Blame File");
+        }
     } else if (kind == GIT_TREE_UNSTAGED_FILE || kind == GIT_TREE_CONFLICT_FILE) {
         AppendMenuW(menu, MF_STRING, GIT_CTX_STAGE,
                    kind == GIT_TREE_CONFLICT_FILE ? L"Mark Resolved" : L"Stage");
         AppendMenuW(menu, MF_STRING, GIT_CTX_DISCARD, L"Discard Changes...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, GIT_CTX_DIFF, L"Open Diff");
+        if (mark != L'?') {
+            AppendMenuW(menu, MF_STRING, GIT_CTX_LOG, L"Show File History");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_BLAME, L"Blame File");
+        }
     }
     UINT command = GetMenuItemCount(menu) > 0
         ? TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -1031,6 +1042,8 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
             queue_git_panel_action(kind == GIT_TREE_REMOTE_BRANCH ? 8 : 4, path, 0);
             break;
         case GIT_CTX_DELETE_BRANCH: queue_git_panel_action(6, path, 0); break;
+        case GIT_CTX_LOG: queue_git_panel_action(10, path, 0); break;
+        case GIT_CTX_BLAME: queue_git_panel_action(11, path, 0); break;
     }
     free(path);
 }

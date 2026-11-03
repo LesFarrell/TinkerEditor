@@ -164,6 +164,8 @@ static const MenuCommand COMMANDS[] = {
     {"git.stash_apply", IDM_GIT_STASH_APPLY, NULL},
     {"git.stash_pop", IDM_GIT_STASH_POP, NULL},
     {"git.stash_drop", IDM_GIT_STASH_DROP, NULL},
+    {"git.log_file", IDM_GIT_LOG_FILE, NULL},
+    {"git.blame_file", IDM_GIT_BLAME_FILE, NULL},
 
     {"run.run_file", IDM_RUN_FILE, "Ctrl+F5"},
     {"run.debug_file", IDM_DEBUG_FILE, "F5"},

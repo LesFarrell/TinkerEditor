@@ -17,7 +17,10 @@ Tests live in `tests/`; `test_preview.js` covers the preview bridge. Bundled ext
 
 Visual Studio's Desktop development with C++ workload must be installed; the
 scripts locate and initialize its x64 tools automatically. Run `test.bat`
-before `build.bat` when preparing a reviewable change.
+before `build.bat` when preparing a reviewable change. A `'vswhere.exe' is not
+recognized...` line at the start of either script is expected when vswhere
+isn't on PATH; the scripts fall back to locating the toolchain another way
+and continue normally.
 
 ## Coding Style & Naming Conventions
 

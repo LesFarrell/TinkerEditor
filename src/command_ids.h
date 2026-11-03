@@ -97,6 +97,8 @@
 #define IDM_GIT_STASH_APPLY        436
 #define IDM_GIT_STASH_POP          437
 #define IDM_GIT_STASH_DROP         438
+#define IDM_GIT_LOG_FILE           439
+#define IDM_GIT_BLAME_FILE         440
 #define IDM_PLUGIN_COMMAND_0      2000 /* IDM_PLUGIN_COMMAND_0 .. IDM_PLUGIN_COMMAND_0+PLUGIN_MAX_COMMANDS-1 */
 
 /* ---- menu command IDs: Markdown formatting toolbar/menu ---- */

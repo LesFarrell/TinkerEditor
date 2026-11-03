@@ -810,6 +810,34 @@ static int store_find_match(void *context, const WCHAR *path, int lineNumber, WC
     return stored;
 }
 
+/* Writes every match to the Output tab, one "relative/path:line — snippet"
+   line each - already the exact shape open_output_location() parses - so the
+   full result set stays double-click-able after the quick picker below is
+   closed, for working through many hits instead of just the one just opened.
+   root is the workspace folder the labels' paths are relative to. */
+static void report_find_in_folder_results(const WorkspaceFiles *results, const WCHAR *root,
+                                          const WCHAR *queryWide) {
+    if (!g_hOutputPanel) return;
+    OutputPane *pane = &g_outputPanes[OUTPUT_TAB_RUN];
+    end_output_program(pane);
+    clear_output_pane(pane);
+    free(pane->directory);
+    pane->directory = root ? _wcsdup(root) : NULL;
+    WCHAR note[320];
+    swprintf(note, sizeof(note) / sizeof(note[0]),
+            L"Find in Folder: \"%ls\" — %d match%ls (double-click a line to open it)",
+            queryWide, results->count, results->count == 1 ? L"" : L"es");
+    append_output_note(pane, OUTPUT_STYLE_NOTE, note);
+    for (int i = 0; i < results->count; i++) {
+        char *utf8 = to_utf8(results->labels[i]);
+        if (!utf8) continue;
+        append_output(pane, OUTPUT_STYLE_DEFAULT, utf8, strlen(utf8));
+        append_output(pane, OUTPUT_STYLE_DEFAULT, "\n", 1);
+        free(utf8);
+    }
+    show_output_panel(OUTPUT_TAB_RUN, 0);
+}
+
 static void do_find_in_folder(void) {
     WorkspaceFiles files;
     if (!collect_workspace_files(&files)) return;
@@ -825,6 +853,7 @@ static void do_find_in_folder(void) {
     int resultsTruncated = scan_workspace_matches(&files, query, store_find_match, &results,
                                                   &skippedLarge, &readFailed);
     int enumerationTruncated = files.truncated;
+    WCHAR *root = wcsdup_heap(files.root);
     free(query);
     free_workspace_files(&files);
     warn_incomplete_workspace_scan(L"Find in Folder", enumerationTruncated, skippedLarge,
@@ -832,8 +861,10 @@ static void do_find_in_folder(void) {
     if (!results.count) {
         MessageBoxW(g_hMainWnd, L"No matches were found.", L"Find in Folder",
                     MB_OK | MB_ICONINFORMATION);
-        free_workspace_files(&results); return;
+        free_workspace_files(&results); free(root); return;
     }
+    report_find_in_folder_results(&results, root, queryWide);
+    free(root);
     int selected = show_choice_dialog(L"Find in Folder", L"Filter results, then open a match:",
                                       results.labels, results.count, L"Open");
     if (selected >= 0 && selected < results.count && open_file_in_tab(results.paths[selected])) {

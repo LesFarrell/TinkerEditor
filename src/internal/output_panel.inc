@@ -622,6 +622,12 @@ static int run_git_output(const WCHAR *parameters, const WCHAR *title) {
                          L"--color-moved --histogram --find-renames --submodule=diff " \
                          L"--compact-summary --patch-with-stat"
 
+/* The %-codes here are git's own pretty-format placeholders, not swprintf's -
+   doubled so swprintf(..., GIT_LOG_COMMAND L" -- \"%ls\"", ...) passes them
+   through literally instead of trying to consume them as its own arguments. */
+#define GIT_LOG_COMMAND L"-c core.quotepath=false log --follow --color=always --date=short " \
+                        L"--pretty=format:%%C(yellow)%%h%%Creset %%C(green)%%ad%%Creset %%an: %%s"
+
 static void show_git_status(void) {
     refresh_git_status();
     run_git_output(L"status --short --branch", L"Git Status");
@@ -674,6 +680,44 @@ static void git_diff_panel_file(const WCHAR *relativePath, GitDiffKind kind) {
         run_git_output(parameters, kind == GIT_DIFF_STAGED ? L"Git Staged File Diff" : L"Git File Diff");
     }
     free(parameters);
+}
+
+static void git_log_panel_file(const WCHAR *relativePath) {
+    size_t capacity = wcslen(relativePath) + wcslen(GIT_LOG_COMMAND) + 40;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (!parameters) return;
+    swprintf(parameters, capacity, GIT_LOG_COMMAND L" -- \"%ls\"", relativePath);
+    run_git_output(parameters, L"Git File History");
+    free(parameters);
+}
+
+static void git_blame_panel_file(const WCHAR *relativePath) {
+    size_t capacity = wcslen(relativePath) + 48;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (!parameters) return;
+    swprintf(parameters, capacity, L"-c core.quotepath=false blame --date=short -- \"%ls\"", relativePath);
+    run_git_output(parameters, L"Git Blame");
+    free(parameters);
+}
+
+/* Git > Show File History / Blame File: the active document's full history
+   or per-line attribution, for when the file's current diff isn't enough. */
+static void show_git_file_log(void) {
+    if (!g_currentFile) {
+        MessageBoxW(g_hMainWnd, L"Save the document before viewing its Git history.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    git_log_panel_file(g_currentFile);
+}
+
+static void show_git_file_blame(void) {
+    if (!g_currentFile) {
+        MessageBoxW(g_hMainWnd, L"Save the document before blaming it.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    git_blame_panel_file(g_currentFile);
 }
 
 /* ---- quick, local git commands (stage/unstage/branches...) ----
