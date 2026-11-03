@@ -82,6 +82,7 @@ static const MenuCommand COMMANDS[] = {
     {"view.spell_check", IDM_VIEW_SPELL_CHECK, NULL},
     {"view.spell_check_language", IDM_VIEW_SPELL_LANGUAGE, NULL},
     {"view.outline", IDM_VIEW_OUTLINE, NULL},
+    {"view.outline_on_left", IDM_VIEW_OUTLINE_ON_LEFT, NULL},
     {"view.file_explorer", IDM_VIEW_EXPLORER, "Ctrl+Shift+X"},
     {"view.output_panel", IDM_VIEW_OUTPUT_PANEL, "Ctrl+`"},
     {"view.output_panel_on_right", IDM_VIEW_OUTPUT_PANEL_ON_RIGHT, NULL},

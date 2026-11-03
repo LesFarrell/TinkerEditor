@@ -11,6 +11,7 @@
 #include "plugin_settings.h"
 #include "text_codec.h"
 #include "text_search.h" /* SEARCH_* find options */
+#include "tinkeredit.h" /* OUTPUT_TAB_RUN/OUTPUT_TAB_COUNT, for g_outputTab */
 
 /* Persisted settings: normally %APPDATA%\tinkeredit\settings.json, or
    portable-data\settings.json when portable.mode is beside the executable. */
@@ -167,6 +168,7 @@ void load_layout_settings(void) {
     if (g_tabWidth < 1) g_tabWidth = 1;
     if (g_tabWidth > 16) g_tabWidth = 16;
     g_outlineVisible = read_profile_int(L"View", L"OutlineVisible", g_outlineVisible, path) != 0;
+    g_outlineOnLeft = read_profile_int(L"View", L"OutlineOnLeft", 0, path) != 0;
     g_minimapVisible = read_profile_int(L"View", L"MinimapVisible", g_minimapVisible, path) != 0;
     g_explorerVisible = read_profile_int(L"View", L"ExplorerVisible", g_explorerVisible, path) != 0;
     g_explorerWidthRatio = clamp_ratio(read_profile_int(L"View", L"ExplorerWidthRatio", g_explorerWidthRatio, path));
@@ -200,6 +202,8 @@ void load_layout_settings(void) {
     g_outputPanelOnRight = read_profile_int(L"View", L"OutputPanelOnRight", 0, path) != 0;
     int outputWidth = read_profile_int(L"View", L"OutputPanelWidth", -1, path);
     g_outputPanelWidth = outputWidth > 0 ? outputWidth : -1;
+    g_outputTab = read_profile_int(L"View", L"OutputTab", OUTPUT_TAB_RUN, path);
+    if (g_outputTab < 0 || g_outputTab >= OUTPUT_TAB_COUNT) g_outputTab = OUTPUT_TAB_RUN;
     g_runInConsole = read_profile_int(L"View", L"RunInSeparateConsole", 0, path) != 0;
 
     int left = read_profile_int(L"Window", L"Left", 0, path);
@@ -229,6 +233,7 @@ void save_layout_settings(void) {
     write_profile_int(L"View", L"UseSpacesForIndent", g_indentUseSpaces, path);
     write_profile_int(L"View", L"TabWidth", g_tabWidth, path);
     write_profile_int(L"View", L"OutlineVisible", g_outlineVisible, path);
+    write_profile_int(L"View", L"OutlineOnLeft", g_outlineOnLeft, path);
     write_profile_int(L"View", L"MinimapVisible", g_minimapVisible, path);
     write_profile_int(L"View", L"ExplorerVisible", g_explorerVisible, path);
     write_profile_int(L"View", L"EditorZoom", g_editorZoom, path);
@@ -273,6 +278,7 @@ void save_layout_settings(void) {
     write_profile_int(L"View", L"OutputPanelOnRight", g_outputPanelOnRight, path);
     if (g_outputPanelWidth > 0)
         write_profile_int(L"View", L"OutputPanelWidth", g_outputPanelWidth, path);
+    write_profile_int(L"View", L"OutputTab", g_outputTab, path);
     write_profile_int(L"View", L"RunInSeparateConsole", g_runInConsole, path);
 
     WINDOWPLACEMENT placement = {0};

@@ -78,7 +78,7 @@
 #include "tinkeredit.h"
 
 typedef struct AppWindows {
-    HWND edit, preview, tabs, status, outline, minimap, splitEdit, lastEditView;
+    HWND edit, preview, tabs, status, outline, outlineClose, minimap, splitEdit, lastEditView;
     HWND debugStatus, debugVariables;
     HWND debugContinue, debugStepOver, debugStepInto, debugStepOut;
     HWND outputPanel, outputInput;
@@ -90,6 +90,7 @@ static AppWindows g_windows;
 #define g_hTabs g_windows.tabs
 #define g_hStatus g_windows.status
 #define g_hOutline g_windows.outline
+#define g_hOutlineClose g_windows.outlineClose
 #define g_hMinimap g_windows.minimap
 #define g_hSplitEdit g_windows.splitEdit
 #define g_lastEditView g_windows.lastEditView
@@ -373,6 +374,7 @@ int g_indentUseSpaces = 0;
 int g_tabWidth = 4;
 int g_spellCheckEnabled = 1;
 int g_outlineVisible = 0;
+int g_outlineOnLeft = 0;
 int g_minimapVisible = 1;
 static int g_minimapDragging = 0;
 static int g_minimapViewTop = 0; /* client-relative y (minimap coords) of the visible-region box */
@@ -565,6 +567,15 @@ static void create_navigation_controls(HWND hwnd) {
         0, 0, 0, 0, hwnd, (HMENU)ID_OUTLINE, GetModuleHandleW(NULL), NULL);
     theme_list_frame(g_hOutline);
     themed_scrollbar_attach(g_hOutline, THEMED_SCROLL_LISTBOX);
+
+    /* The close button above it. Its id is IDM_VIEW_OUTLINE itself - the
+       View menu's own toggle command - so clicking it reaches
+       toggle_outline() exactly as that menu item does, the same reuse
+       layout_explorer()'s own close button makes of IDM_VIEW_EXPLORER. */
+    g_hOutlineClose = CreateWindowExW(0, L"BUTTON", L"X",
+        WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, hwnd, (HMENU)(UINT_PTR)IDM_VIEW_OUTLINE, GetModuleHandleW(NULL), NULL);
+    SendMessageW(g_hOutlineClose, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
 }
 
 static void create_document_tabs(HWND hwnd, int dpi) {
@@ -680,6 +691,11 @@ static void initialize_main_window(HWND hwnd) {
     update_status_bar();
     update_outline();
     layout(hwnd);
+    /* g_outputTab (restored from settings) already picked which tab's view
+       is visible - creation time keyed every WS_VISIBLE off it - but that
+       alone doesn't revive a Terminal tab's actual shell process, which
+       select_output_tab() would normally start on the way to that tab. */
+    if (g_outputPanelVisible && g_outputTab == OUTPUT_TAB_TERMINAL) start_terminal();
 }
 
 /* Runs the slow, non-essential startup work that would otherwise keep the
@@ -973,6 +989,9 @@ static int handle_owner_draw(LPARAM lParam) {
     const DRAWITEMSTRUCT *item = (const DRAWITEMSTRUCT *)lParam;
     if (item->CtlType == ODT_MENU && item->itemData)
         draw_main_menu_item(item);
+    else if (item->CtlType == ODT_BUTTON &&
+            (item->hwndItem == g_hExplorerClose || item->hwndItem == g_hOutlineClose))
+        draw_debug_panel_button(item); /* the same plain bordered push-button painter the output and Git panels use */
     else if (item->CtlType == ODT_BUTTON)
         draw_toolbar_button(item);
     else if (item->CtlType == ODT_TAB && item->hwndItem == g_hTabs)

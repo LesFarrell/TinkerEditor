@@ -40,7 +40,10 @@ typedef struct OutputPane {
 
 static OutputPane g_outputPanes[OUTPUT_TAB_COUNT];
 static TerminalView *g_terminalView; /* the Terminal tab; g_outputPanes[OUTPUT_TAB_TERMINAL].view is its window */
-static int g_outputTab = OUTPUT_TAB_RUN;
+/* Persisted (settings.c) so the Output Panel reopens on whichever tab was
+   active last, rather than always Run. Not static for that reason - plain
+   global, like g_outputPanelVisible and friends. */
+int g_outputTab = OUTPUT_TAB_RUN;
 /* Visual and keyboard traversal order. Keep the enum values stable because
    the panes themselves are indexed by them; Output remains the default tab
    but is placed last in the strip. */

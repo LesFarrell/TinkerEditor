@@ -274,6 +274,9 @@ static int handle_view_command(HWND hwnd, WORD cmd) {
         case IDM_VIEW_OUTLINE:
             toggle_outline(hwnd);
             break;
+        case IDM_VIEW_OUTLINE_ON_LEFT:
+            toggle_outline_side(hwnd);
+            break;
         case IDM_VIEW_MINIMAP:
             toggle_minimap(hwnd);
             break;

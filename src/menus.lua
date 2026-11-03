@@ -132,6 +132,7 @@ return {
     { "&Spell Check", "view.spell_check" },
     { "Spell Check &Language...", "view.spell_check_language" },
     { "Document &Outline", "view.outline" },
+    { "Document Outline on &Left", "view.outline_on_left" },
     { "&File Explorer", "view.file_explorer" },
     { "Mini&map", "view.minimap" },
     { "Split Editor &Horizontally", "view.split_editor" },

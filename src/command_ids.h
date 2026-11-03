@@ -102,6 +102,7 @@
 #define IDM_VIEW_OUTPUT_PANEL_ON_RIGHT 442
 #define IDM_VIEW_GIT_ON_RIGHT          443
 #define IDM_GIT_COMMIT_AND_PUSH        444
+#define IDM_VIEW_OUTLINE_ON_LEFT       445
 #define IDM_PLUGIN_COMMAND_0      2000 /* IDM_PLUGIN_COMMAND_0 .. IDM_PLUGIN_COMMAND_0+PLUGIN_MAX_COMMANDS-1 */
 
 /* ---- menu command IDs: Markdown formatting toolbar/menu ---- */
