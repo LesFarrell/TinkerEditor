@@ -45,11 +45,10 @@ static int g_outputTab = OUTPUT_TAB_RUN;
    the panes themselves are indexed by them; Output remains the default tab
    but is placed last in the strip. */
 static const int OUTPUT_TAB_ORDER[OUTPUT_TAB_COUNT] = {
-    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_GIT, OUTPUT_TAB_RUN
+    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_RUN
 };
 static int g_outputNextSession = 1;
 static HWND g_hOutputClear, g_hOutputStop, g_hOutputClose;
-static HWND g_hGitRefresh, g_hGitCommit, g_hGitStageAll;
 static char *g_outputHistory[OUTPUT_HISTORY_SIZE];
 static int g_outputHistoryCount = 0;
 static int g_outputHistoryIndex = 0; /* g_outputHistoryCount while not browsing it */
@@ -141,7 +140,6 @@ static int tab_running(int tab) {
 static HWND active_output_focus_target(void) {
     if (g_outputTab == OUTPUT_TAB_TERMINAL) return terminal_view_window(g_terminalView);
     if (g_outputTab == OUTPUT_TAB_PROBLEMS) return g_outputPanes[OUTPUT_TAB_PROBLEMS].view;
-    if (g_outputTab == OUTPUT_TAB_GIT) return g_outputPanes[OUTPUT_TAB_GIT].view;
     if (g_outputTab == OUTPUT_TAB_DEBUG) return g_hDebugVariables;
     return g_hOutputInput;
 }
@@ -203,29 +201,27 @@ static void apply_debug_tab_theme(void) {
     }
 }
 
+/* Implemented in git_panel.inc, included later in the unity build. */
+static void apply_git_panel_theme(void);
+
 static void apply_output_panel_theme(void) {
     if (!g_hOutputPanel) return;
     apply_output_view_theme(g_outputPanes[OUTPUT_TAB_RUN].view);
     apply_output_view_theme(g_outputPanes[OUTPUT_TAB_PROBLEMS].view);
     apply_output_view_theme(g_hOutputInput);
-    if (g_outputPanes[OUTPUT_TAB_GIT].view) {
-        apply_explorer_theme(g_outputPanes[OUTPUT_TAB_GIT].view);
-        TreeView_SetBkColor(g_outputPanes[OUTPUT_TAB_GIT].view, theme_bg_color());
-        TreeView_SetTextColor(g_outputPanes[OUTPUT_TAB_GIT].view, theme_fg_color());
-        themed_scrollbar_refresh(g_outputPanes[OUTPUT_TAB_GIT].view);
-        InvalidateRect(g_outputPanes[OUTPUT_TAB_GIT].view, NULL, TRUE);
-    }
     const ThemePalette *p = theme_palette();
     const COLORREF *ansi = g_editorDarkMode ? OUTPUT_ANSI_DARK : OUTPUT_ANSI_LIGHT;
     terminal_view_apply_theme(g_terminalView, ansi, p->fg, p->bg);
     apply_debug_tab_theme();
+    apply_git_panel_theme();
     InvalidateRect(g_hOutputPanel, NULL, TRUE);
-    HWND buttons[] = { g_outputPanes[0].tab, g_outputPanes[1].tab,
-                       g_outputPanes[2].tab, g_outputPanes[3].tab, g_outputPanes[4].tab,
-                       g_hOutputClear, g_hOutputStop, g_hOutputClose,
-                       g_hDebugContinue, g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut,
-                       g_hGitRefresh, g_hGitStageAll, g_hGitCommit };
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+    HWND buttons[OUTPUT_TAB_COUNT + 7];
+    size_t n = 0;
+    for (int i = 0; i < OUTPUT_TAB_COUNT; i++) buttons[n++] = g_outputPanes[i].tab;
+    buttons[n++] = g_hOutputClear; buttons[n++] = g_hOutputStop; buttons[n++] = g_hOutputClose;
+    buttons[n++] = g_hDebugContinue; buttons[n++] = g_hDebugStepOver;
+    buttons[n++] = g_hDebugStepInto; buttons[n++] = g_hDebugStepOut;
+    for (size_t i = 0; i < n; i++)
         if (buttons[i]) InvalidateRect(buttons[i], NULL, TRUE);
 }
 
@@ -1042,6 +1038,11 @@ static void toggle_output_panel(void) {
     else show_output_panel(g_outputTab, 1);
 }
 
+static void toggle_output_panel_side(HWND hwnd) {
+    g_outputPanelOnRight = !g_outputPanelOnRight;
+    relayout_and_save(hwnd);
+}
+
 /* View > Terminal (Ctrl+Shift+`). */
 static void show_terminal(void) {
     show_output_panel(OUTPUT_TAB_TERMINAL, 1);
@@ -1389,8 +1390,7 @@ static OutputPanelLayout output_panel_layout(HWND panel) {
    below it; the Run tab keeps the two separate. */
 static RECT output_content_rect(const OutputPanelLayout *layout) {
     RECT rect = layout->view;
-    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS ||
-        g_outputTab == OUTPUT_TAB_GIT)
+    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS)
         rect.bottom = layout->inputBox.bottom;
     return rect;
 }
@@ -1416,11 +1416,6 @@ static int active_output_buttons(OutputHeaderButton *buttons, int dpi) {
     } else if (g_outputTab == OUTPUT_TAB_PROBLEMS) {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputClear, buttonWidth };
-    } else if (g_outputTab == OUTPUT_TAB_GIT) {
-        int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
-        buttons[n++] = (OutputHeaderButton){ g_hGitCommit, buttonWidth };
-        buttons[n++] = (OutputHeaderButton){ g_hGitStageAll, buttonWidth };
-        buttons[n++] = (OutputHeaderButton){ g_hGitRefresh, buttonWidth };
     } else {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputStop, buttonWidth };
@@ -1456,8 +1451,7 @@ static void size_output_panel(HWND panel) {
        isn't active are hidden outright, rather than left stacked underneath
        the active tab's. */
     HWND inactiveButtons[] = { g_hOutputClear, g_hOutputStop, g_hDebugContinue,
-                               g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut,
-                               g_hGitRefresh, g_hGitStageAll, g_hGitCommit };
+                               g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut };
     for (size_t i = 0; i < sizeof(inactiveButtons) / sizeof(inactiveButtons[0]); i++)
         ShowWindow(inactiveButtons[i], SW_HIDE);
     int tabsRight = layout.pad + OUTPUT_TAB_COUNT * tabWidth;
@@ -1479,7 +1473,7 @@ static void size_output_panel(HWND panel) {
        view gets its own content rect: the Terminal tab's spans the input
        box's space too, since it has no separate input line. */
     for (int i = 0; i < OUTPUT_TAB_COUNT; i++) {
-        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS || i == OUTPUT_TAB_GIT)
+        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS)
                      ? output_content_rect(&layout) : layout.view;
         MoveWindow(g_outputPanes[i].view, content.left + 1, content.top + 1,
                    content.right - content.left - 2, content.bottom - content.top - 2, TRUE);
@@ -1511,8 +1505,7 @@ static void paint_output_panel(HWND panel, HDC hdc) {
     OutputPanelLayout layout = output_panel_layout(panel);
     RECT content = output_content_rect(&layout);
     frame_rect(hdc, &content, theme_border_color());
-    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS &&
-        g_outputTab != OUTPUT_TAB_GIT)
+    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS)
         frame_rect(hdc, &layout.inputBox, theme_border_color());
 }
 
@@ -1561,20 +1554,6 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
                     select_output_tab(OUTPUT_TAB_DEBUG);
                     SetFocus(g_hDebugVariables);
                     return 0;
-                case ID_OUTPUT_TAB_GIT:
-                    refresh_git_status();
-                    select_output_tab(OUTPUT_TAB_GIT);
-                    SetFocus(g_outputPanes[OUTPUT_TAB_GIT].view);
-                    return 0;
-                case ID_GIT_REFRESH:
-                    refresh_git_status();
-                    return 0;
-                case ID_GIT_STAGE_ALL:
-                    git_stage_all();
-                    return 0;
-                case ID_GIT_COMMIT:
-                    git_commit_prompt();
-                    return 0;
                 case IDM_DEBUG_CONTINUE: case IDM_DEBUG_STEP_OVER:
                 case IDM_DEBUG_STEP_INTO: case IDM_DEBUG_STEP_OUT:
                     /* debugger.inc's run_debugger_command() is reached through
@@ -1610,22 +1589,11 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
             break;
         case WM_NOTIFY: {
             NMHDR *notification = (NMHDR *)lParam;
-            HWND gitTree = g_outputPanes[OUTPUT_TAB_GIT].view;
-            if (notification->hwndFrom == gitTree && notification->code == NM_CUSTOMDRAW)
-                return git_tree_customdraw((NMTVCUSTOMDRAW *)lParam);
             if (notification->code == SCN_DOUBLECLICK) {
                 for (int i = 0; i < OUTPUT_TAB_COUNT; i++)
                     if (notification->hwndFrom == g_outputPanes[i].view)
                         open_output_location(&g_outputPanes[i],
                                              ((struct SCNotification *)lParam)->position);
-            } else if (notification->hwndFrom == gitTree && notification->code == TVN_DELETEITEMW) {
-                handle_git_tree_delete_item((NMTREEVIEWW *)lParam);
-            } else if (notification->hwndFrom == gitTree && notification->code == TVN_ITEMCHANGEDW) {
-                handle_git_tree_item_changed((NMTVITEMCHANGE *)lParam);
-            } else if (notification->hwndFrom == gitTree && notification->code == NM_DBLCLK) {
-                handle_git_tree_double_click(gitTree);
-            } else if (notification->hwndFrom == gitTree && notification->code == NM_RCLICK) {
-                handle_git_tree_mouse_context_menu(gitTree);
             } else if (notification->code == TVN_EXITED) {
                 update_output_controls();
             } else if (notification->code == TVN_RESTART_REQUESTED) {
@@ -1685,10 +1653,9 @@ static void create_output_panel(HWND hwnd) {
                                      0, 0, 0, 0, hwnd, (HMENU)ID_OUTPUT_PANEL, GetModuleHandleW(NULL), NULL);
     SetWindowSubclass(g_hOutputPanel, OutputPanelSubclassProc, 1, 0);
     static const WCHAR *const labels[OUTPUT_TAB_COUNT] =
-        { L"Output", L"Terminal", L"Problems", L"Debug", L"Git" };
+        { L"Output", L"Terminal", L"Problems", L"Debug" };
     static const int tabIds[OUTPUT_TAB_COUNT] = { ID_OUTPUT_TAB_RUN, ID_OUTPUT_TAB_TERMINAL,
-                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG,
-                                                  ID_OUTPUT_TAB_GIT };
+                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG };
     for (int position = 0; position < OUTPUT_TAB_COUNT; position++) {
         int tab = OUTPUT_TAB_ORDER[position];
         g_outputPanes[tab].tab = create_output_button(g_hOutputPanel, labels[tab], tabIds[tab]);
@@ -1718,19 +1685,6 @@ static void create_output_panel(HWND hwnd) {
     themed_scrollbar_attach(problemsPane->view, THEMED_SCROLL_SCINTILLA);
     SetWindowSubclass(problemsPane->view, OutputViewSubclassProc,
                       (UINT_PTR)(OUTPUT_TAB_PROBLEMS + 1), 0);
-
-    /* Unlike the Scintilla-based tabs, the Git tab is a checkbox TreeView -
-       see the "Git panel's own tab" section above for why. */
-    OutputPane *gitPane = &g_outputPanes[OUTPUT_TAB_GIT];
-    gitPane->view = CreateWindowExW(0, WC_TREEVIEWW, L"",
-        WS_CHILD | (g_outputTab == OUTPUT_TAB_GIT ? WS_VISIBLE : 0) | WS_VSCROLL | WS_TABSTOP |
-            TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS |
-            TVS_DISABLEDRAGDROP | TVS_CHECKBOXES,
-        0, 0, 0, 0, g_hOutputPanel, (HMENU)(UINT_PTR)(ID_OUTPUT_VIEW + 2), GetModuleHandleW(NULL), NULL);
-    TreeView_SetExtendedStyle(gitPane->view, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
-    TreeView_SetItemHeight(gitPane->view, MulDiv(18, GetDpiForWindow(hwnd), 96));
-    SetWindowSubclass(gitPane->view, GitTreeSubclassProc, 1, 0);
-    themed_scrollbar_attach(gitPane->view, THEMED_SCROLL_TREEVIEW);
 
     g_terminalView = terminal_view_create(g_hOutputPanel, ID_TERMINAL_VIEW);
     g_outputPanes[OUTPUT_TAB_TERMINAL].view = terminal_view_window(g_terminalView);
@@ -1771,12 +1725,6 @@ static void create_output_panel(HWND hwnd) {
     g_hOutputClear = create_output_button(g_hOutputPanel, L"Clear", ID_OUTPUT_CLEAR);
     g_hOutputStop = create_output_button(g_hOutputPanel, L"Stop", ID_OUTPUT_STOP);
     g_hOutputClose = create_output_button(g_hOutputPanel, L"X", ID_OUTPUT_CLOSE);
-    g_hGitRefresh = create_output_button(g_hOutputPanel, L"Refresh", ID_GIT_REFRESH);
-    g_hGitStageAll = create_output_button(g_hOutputPanel, L"Stage All", ID_GIT_STAGE_ALL);
-    g_hGitCommit = create_output_button(g_hOutputPanel, L"Commit...", ID_GIT_COMMIT);
-    ShowWindow(g_hGitRefresh, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_hGitStageAll, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_hGitCommit, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
     g_hOutputInput = create_output_scintilla(g_hOutputPanel, ID_OUTPUT_INPUT, 1);
     SendMessageA(g_hOutputInput, SCI_SETVSCROLLBAR, FALSE, 0);
     SendMessageA(g_hOutputInput, SCI_SETHSCROLLBAR, FALSE, 0);

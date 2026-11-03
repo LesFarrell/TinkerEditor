@@ -7,8 +7,10 @@
 
 /* The output panel's tabs (see output_panel.inc). Declared here, rather than
    there, so debugger.inc - included before output_panel.inc in tinkeredit.c's
-   unity build - can name OUTPUT_TAB_DEBUG when starting a debug session. */
-enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_GIT,
+   unity build - can name OUTPUT_TAB_DEBUG when starting a debug session.
+   Git has its own independently-dockable panel (git_panel.inc), not a tab
+   here - see g_hGitPanel. */
+enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG,
       OUTPUT_TAB_COUNT };
 
 /* ---- child control IDs ---- */
@@ -32,10 +34,12 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define ID_OUTPUT_CLOSE 120
 #define ID_OUTPUT_TAB_DEBUG 121
 #define ID_OUTPUT_TAB_PROBLEMS 122
-#define ID_OUTPUT_TAB_GIT 123
 #define ID_GIT_COMMIT 124
 #define ID_GIT_STAGE_ALL 125
 #define ID_GIT_REFRESH 126
+#define ID_GIT_PANEL 127
+#define ID_GIT_TREE 128
+#define ID_GIT_CLOSE 129
 
 /* ---- timer IDs ---- */
 #define IDT_PREVIEW_UPDATE 1
@@ -116,11 +120,18 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define OUTPUT_PANEL_HEIGHT 220     /* until the user drags the splitter above it */
 #define OUTPUT_PANEL_MIN_HEIGHT 90
 #define OUTPUT_PANEL_MIN_SPACE 200  /* below this much height the panel stays hidden */
+#define OUTPUT_PANEL_WIDTH 320      /* until the user drags the splitter beside it, when docked at the side */
+#define OUTPUT_PANEL_MIN_WIDTH 180
+#define OUTPUT_PANEL_MIN_SPACE_X 360 /* below this much width the side-docked panel stays hidden */
 #define OUTPUT_PANEL_PADDING 6
 #define OUTPUT_HEADER_HEIGHT 30
 #define OUTPUT_INPUT_HEIGHT 24
 #define OUTPUT_TAB_WIDTH 90
 #define OUTPUT_BUTTON_WIDTH 64
+/* The Git panel docks at the left or right edge, like the file explorer -
+   see g_gitPanelOnRight. */
+#define GIT_PANEL_WIDTH 280         /* until the user drags its splitter */
+#define GIT_PANEL_MIN_WIDTH 180
 
 /* Larger custom preview stylesheets are refused rather than loaded. */
 #define CUSTOM_CSS_MAX_BYTES (4 * 1024 * 1024)

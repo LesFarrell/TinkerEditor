@@ -62,6 +62,8 @@ extern int g_splitEditorRatio;
 extern int g_splitEditorVertical;
 extern int g_outputPanelVisible;
 extern int g_outputPanelHeight;
+extern int g_outputPanelOnRight;
+extern int g_outputPanelWidth;
 extern int g_runInConsole;
 extern int g_commandLinePreviewMode;
 extern RECT g_savedWindowRect;

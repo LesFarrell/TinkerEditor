@@ -280,8 +280,14 @@ static int handle_view_command(HWND hwnd, WORD cmd) {
         case IDM_VIEW_EXPLORER:
             toggle_explorer_panel(hwnd);
             break;
+        case IDM_VIEW_EXPLORER_ON_RIGHT:
+            toggle_explorer_side(hwnd);
+            break;
         case IDM_VIEW_OUTPUT_PANEL:
             toggle_output_panel();
+            break;
+        case IDM_VIEW_OUTPUT_PANEL_ON_RIGHT:
+            toggle_output_panel_side(hwnd);
             break;
         case IDM_VIEW_TERMINAL:
             show_terminal();
@@ -356,7 +362,8 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_DIFF_STAGED: show_git_staged_diff(); break;
         case IDM_GIT_LOG_FILE: show_git_file_log(); break;
         case IDM_GIT_BLAME_FILE: show_git_file_blame(); break;
-        case IDM_VIEW_GIT: show_git_panel(); break;
+        case IDM_VIEW_GIT: toggle_git_panel(); break;
+        case IDM_VIEW_GIT_ON_RIGHT: toggle_git_panel_side(g_hMainWnd); break;
         case IDM_GIT_STAGE_ALL: git_stage_all(); break;
         case IDM_GIT_UNSTAGE_ALL: git_unstage_all(); break;
         case IDM_GIT_DISCARD_ALL: git_discard_all(); break;

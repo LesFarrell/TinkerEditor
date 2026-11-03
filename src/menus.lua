@@ -133,6 +133,7 @@ return {
     { "Spell Check &Language...", "view.spell_check_language" },
     { "Document &Outline", "view.outline" },
     { "&File Explorer", "view.file_explorer" },
+    { "File Explorer on Ri&ght", "view.explorer_on_right" },
     { "Mini&map", "view.minimap" },
     { "Split Editor &Horizontally", "view.split_editor" },
     { "Split Editor &Vertically", "view.split_editor_vertical" },
@@ -140,6 +141,7 @@ return {
     { "&Reset Split Editor", "view.reset_split_editor" },
     { "&Panels", {
       { "Output Pa&nel", "view.output_panel" },
+      { "Output Panel on &Right", "view.output_panel_on_right" },
       { "Te&rminal", "view.terminal" },
       { "&Problems", "view.problems" },
     } },
@@ -168,6 +170,7 @@ return {
 
   { "&Git", {
     { "&Git Panel", "git.panel" },
+    { "Git Panel on &Right", "git.panel_on_right" },
     { "&Status", "git.status" },
     { "Diff Current &File (Unstaged)", "git.diff_file" },
     { "Diff Current File (S&taged)", "git.diff_file_staged" },

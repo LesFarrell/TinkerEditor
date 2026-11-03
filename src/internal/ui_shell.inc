@@ -605,7 +605,11 @@ static int command_state(UINT id, CommandState *state) {
         case IDM_VIEW_SPELL_CHECK: STATE_CHECK(g_spellCheckEnabled); state->enabled = g_spellChecker != NULL; break;
         case IDM_VIEW_OUTLINE: STATE_CHECK(g_outlineVisible); break;
         case IDM_VIEW_EXPLORER: STATE_CHECK(g_explorerVisible); break;
+        case IDM_VIEW_EXPLORER_ON_RIGHT: STATE_CHECK(g_explorerOnRight); break;
+        case IDM_VIEW_GIT: STATE_CHECK(g_gitPanelVisible); break;
+        case IDM_VIEW_GIT_ON_RIGHT: STATE_CHECK(g_gitPanelOnRight); break;
         case IDM_VIEW_OUTPUT_PANEL: STATE_CHECK(g_outputPanelVisible); break;
+        case IDM_VIEW_OUTPUT_PANEL_ON_RIGHT: STATE_CHECK(g_outputPanelOnRight); break;
         case IDM_RUN_USE_CONSOLE: STATE_CHECK(g_runInConsole); break;
         case IDM_VIEW_MINIMAP: STATE_CHECK(g_minimapVisible); break;
         case IDM_VIEW_TOGGLESPLIT: STATE_CHECK(g_splitEditorVisible && !g_splitEditorVertical); break;
@@ -1014,9 +1018,8 @@ static void layout_tabs(LayoutArea *area) {
     if (area->height < 0) area->height = 0;
 }
 
-/* File explorer panel: docked at the left edge of the remaining content
-   area (below the toolbar, above the status bar), opposite side from the
-   outline pane. */
+/* File explorer panel: docked at the left or right edge of the remaining
+   content area (below the toolbar, above the status bar), per g_explorerOnRight. */
 static void layout_explorer(HWND hwnd, LayoutArea *area) {
     if (!g_hExplorerTree || !g_explorerVisible || g_focusMode) {
         g_explorerSplitterRect = (RECT){0, 0, 0, 0};
@@ -1030,27 +1033,54 @@ static void layout_explorer(HWND hwnd, LayoutArea *area) {
     int maxWidth = area->width * 2 / 3;
     if (g_explorerWidth < minWidth) g_explorerWidth = minWidth;
     if (maxWidth > minWidth && g_explorerWidth > maxWidth) g_explorerWidth = maxWidth;
-    g_explorerSplitterRect = (RECT){ g_explorerWidth, area->y,
-                                     g_explorerWidth + SPLITTER_WIDTH, area->y + area->height };
-    MoveWindow(g_hExplorerTree, 0, area->y, g_explorerWidth, area->height, TRUE);
-    ShowWindow(g_hExplorerTree, SW_SHOW);
-    area->x = g_explorerWidth + SPLITTER_WIDTH;
-    area->width -= area->x;
+    if (g_explorerOnRight) {
+        int explorerX = area->x + area->width - g_explorerWidth;
+        g_explorerSplitterRect = (RECT){ explorerX - SPLITTER_WIDTH, area->y,
+                                         explorerX, area->y + area->height };
+        MoveWindow(g_hExplorerTree, explorerX, area->y, g_explorerWidth, area->height, TRUE);
+        area->width -= g_explorerWidth + SPLITTER_WIDTH;
+    } else {
+        g_explorerSplitterRect = (RECT){ area->x + g_explorerWidth, area->y,
+                                         area->x + g_explorerWidth + SPLITTER_WIDTH, area->y + area->height };
+        MoveWindow(g_hExplorerTree, area->x, area->y, g_explorerWidth, area->height, TRUE);
+        area->x += g_explorerWidth + SPLITTER_WIDTH;
+        area->width -= g_explorerWidth + SPLITTER_WIDTH;
+    }
     if (area->width < 0) area->width = 0;
+    ShowWindow(g_hExplorerTree, SW_SHOW);
 }
 
-/* The output panel docks under the editor, preview and outline, with a
-   splitter along its top edge for its height. It keeps the height the user
-   dragged it to, within what the window can spare. Its Debug tab is where a
-   debug session's status and variables show (see output_panel.inc). */
+/* The output panel docks under the editor, preview and outline (a splitter
+   along its top edge for its height) or, when g_outputPanelOnRight, beside
+   them instead (a splitter along its left edge for its width). Either way
+   it keeps the size the user dragged it to, within what the window can
+   spare. Its Debug tab is where a debug session's status and variables show
+   (see output_panel.inc). */
 static void layout_output_panel(HWND hwnd, LayoutArea *area) {
     g_outputSplitterRect = (RECT){0, 0, 0, 0};
     if (!g_hOutputPanel) return;
+    int dpi = GetDpiForWindow(hwnd);
+    if (g_outputPanelOnRight) {
+        if (!g_outputPanelVisible || g_focusMode || area->width < OUTPUT_PANEL_MIN_SPACE_X) {
+            ShowWindow(g_hOutputPanel, SW_HIDE);
+            return;
+        }
+        int minimum = MulDiv(OUTPUT_PANEL_MIN_WIDTH, dpi, 96);
+        int maximum = area->width - minimum - SPLITTER_WIDTH;
+        if (g_outputPanelWidth < 0) g_outputPanelWidth = MulDiv(OUTPUT_PANEL_WIDTH, dpi, 96);
+        if (g_outputPanelWidth > maximum) g_outputPanelWidth = maximum;
+        if (g_outputPanelWidth < minimum) g_outputPanelWidth = minimum;
+        int left = area->x + area->width - g_outputPanelWidth;
+        MoveWindow(g_hOutputPanel, left, area->y, g_outputPanelWidth, area->height, TRUE);
+        ShowWindow(g_hOutputPanel, SW_SHOW);
+        g_outputSplitterRect = (RECT){ left - SPLITTER_WIDTH, area->y, left, area->y + area->height };
+        area->width -= g_outputPanelWidth + SPLITTER_WIDTH;
+        return;
+    }
     if (!g_outputPanelVisible || g_focusMode || area->height < OUTPUT_PANEL_MIN_SPACE) {
         ShowWindow(g_hOutputPanel, SW_HIDE);
         return;
     }
-    int dpi = GetDpiForWindow(hwnd);
     int minimum = MulDiv(OUTPUT_PANEL_MIN_HEIGHT, dpi, 96);
     int maximum = area->height - minimum - SPLITTER_WIDTH;
     if (g_outputPanelHeight < 0) g_outputPanelHeight = MulDiv(OUTPUT_PANEL_HEIGHT, dpi, 96);
@@ -1127,6 +1157,11 @@ static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
     set_webview_bounds(wvRc, TRUE);
 }
 
+/* Implemented in git_panel.inc, included later in the unity build - the Git
+   panel is a full-height side panel like the explorer, so layout() carves
+   it out alongside that one, before the tab strip and the rest. */
+static void layout_git_panel(HWND hwnd, LayoutArea *area);
+
 static void layout(HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
@@ -1135,6 +1170,7 @@ static void layout(HWND hwnd) {
     layout_status_bar(hwnd, &area);
     layout_toolbar(&area);
     layout_explorer(hwnd, &area);
+    layout_git_panel(hwnd, &area);
     layout_tabs(&area);
     layout_output_panel(hwnd, &area);
     layout_outline(hwnd, &area);
@@ -1178,14 +1214,19 @@ static void toggle_editor(HWND hwnd) {
 static void toggle_panel_sides(HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
-    /* g_splitterPos is relative to the content area right of the explorer
-       panel, so the mirrored position has to be computed against that
-       narrower width, not the full client width. */
-    int contentWidth = rc.right - explorer_content_x(g_focusMode);
+    /* g_splitterPos is relative to the content area beside the explorer
+       and Git panels, so the mirrored position has to be computed against
+       that narrower width, not the full client width. */
+    int contentWidth = rc.right - explorer_panel_width(g_focusMode) - git_panel_width(g_focusMode);
     if (g_splitterPos >= 0 && contentWidth > SPLITTER_WIDTH) {
         g_splitterPos = contentWidth - SPLITTER_WIDTH - g_splitterPos;
     }
     g_previewOnLeft = !g_previewOnLeft;
+    relayout_and_save(hwnd);
+}
+
+static void toggle_explorer_side(HWND hwnd) {
+    g_explorerOnRight = !g_explorerOnRight;
     relayout_and_save(hwnd);
 }
 

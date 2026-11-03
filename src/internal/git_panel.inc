@@ -21,6 +21,10 @@ static int g_gitRemoteBranchCount;
 static int g_gitRemoteBranchCapacity;
 static WCHAR *g_gitBranchesWorkspace;
 
+/* The Git panel's own header buttons (its window is created further down,
+   in "the Git panel's own window"). */
+static HWND g_hGitRefresh, g_hGitCommit, g_hGitStageAll, g_hGitClose;
+
 static void clear_git_branch_cache(void) {
     free_branch_list(g_gitLocalBranches, g_gitLocalBranchCount);
     g_gitLocalBranches = NULL;
@@ -591,12 +595,10 @@ static void git_rebase_abort(void) {
         run_git_mutating_output(L"rebase --abort", L"Git Abort Rebase");
 }
 
-static void show_git_panel(void) {
-    refresh_git_status();
-    render_git_panel();
-    show_output_panel(OUTPUT_TAB_GIT, 0);
-    SetFocus(g_outputPanes[OUTPUT_TAB_GIT].view);
-}
+/* show_git_panel()/hide_git_panel()/toggle_git_panel() are defined further
+   down, alongside the rest of the panel's own window (create_git_panel()
+   and friends). */
+static void show_git_panel(void);
 
 /* The status bar's Git segment (see StatusSubclassProc) reaches every branch
    command through this one compact menu. */
@@ -752,7 +754,7 @@ static WCHAR *git_file_label(const WCHAR *path, WCHAR mark) {
    never a subprocess - so it's always safe to call directly, including from
    a checkbox click (see handle_git_tree_item_changed()). */
 static void render_git_panel(void) {
-    HWND tree = g_outputPanes[OUTPUT_TAB_GIT].view;
+    HWND tree = g_hGitTree;
     if (!tree) return;
     g_buildingGitTree = 1;
     SendMessageW(tree, WM_SETREDRAW, FALSE, 0);
@@ -975,7 +977,7 @@ static void handle_git_tree_item_changed(NMTVITEMCHANGE *change) {
     int newChecked = ((change->uStateNew & TVIS_STATEIMAGEMASK) >> 12) == 2;
     int oldChecked = ((change->uStateOld & TVIS_STATEIMAGEMASK) >> 12) == 2;
     if (newChecked == oldChecked) return;
-    GitTreeNode *node = git_tree_item_data(g_outputPanes[OUTPUT_TAB_GIT].view, change->hItem);
+    GitTreeNode *node = git_tree_item_data(g_hGitTree, change->hItem);
     if (!node) return;
     if (node->kind == GIT_TREE_STAGED_FILE && !newChecked) queue_git_panel_action(2, node->path, 0);
     else if ((node->kind == GIT_TREE_UNSTAGED_FILE || node->kind == GIT_TREE_CONFLICT_FILE) && newChecked)
@@ -1107,4 +1109,224 @@ static LRESULT git_tree_customdraw(NMTVCUSTOMDRAW *draw) {
         default:
             return CDRF_DODEFAULT;
     }
+}
+
+/* ---- the Git panel's own window ----
+   Unlike the other output tabs, Git has its own independently-dockable
+   panel (View > Git Panel / View > Git Panel on Right), the same shape as
+   the file explorer: a small header of buttons above the tree, sized and
+   positioned by layout_git_panel() below rather than as one more tab inside
+   output_panel.inc's shared host. */
+
+static void size_git_panel(HWND panel) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    int dpi = GetDpiForWindow(panel);
+    int pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
+    int header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
+    int row = header - pad;
+    int closeWidth = MulDiv(DEBUG_CLOSE_BUTTON_WIDTH, dpi, 96);
+    int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
+    HWND buttons[] = { g_hGitClose, g_hGitCommit, g_hGitStageAll, g_hGitRefresh };
+    int widths[] = { closeWidth, buttonWidth, buttonWidth, buttonWidth };
+    int x = rc.right;
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
+        x -= pad + widths[i];
+        MoveWindow(buttons[i], x, pad / 2, widths[i], row, TRUE);
+        InvalidateRect(buttons[i], NULL, TRUE);
+    }
+    RECT content = { pad, header, rc.right - pad, rc.bottom - pad };
+    if (content.right < content.left) content.right = content.left;
+    if (content.bottom < content.top) content.bottom = content.top;
+    MoveWindow(g_hGitTree, content.left + 1, content.top + 1,
+              content.right - content.left - 2, content.bottom - content.top - 2, TRUE);
+}
+
+static void apply_git_panel_theme(void) {
+    if (!g_hGitTree) return;
+    apply_explorer_theme(g_hGitTree);
+    TreeView_SetBkColor(g_hGitTree, theme_bg_color());
+    TreeView_SetTextColor(g_hGitTree, theme_fg_color());
+    themed_scrollbar_refresh(g_hGitTree);
+    InvalidateRect(g_hGitTree, NULL, TRUE);
+    if (g_hGitPanel) InvalidateRect(g_hGitPanel, NULL, TRUE);
+    HWND buttons[] = { g_hGitRefresh, g_hGitStageAll, g_hGitCommit, g_hGitClose };
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+        if (buttons[i]) InvalidateRect(buttons[i], NULL, TRUE);
+}
+
+static void paint_git_panel(HWND panel, HDC hdc) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    fill_rect_color(hdc, &rc, theme_bg_color());
+    int dpi = GetDpiForWindow(panel);
+    int pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
+    int header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
+    RECT content = { pad, header, rc.right - pad, rc.bottom - pad };
+    frame_rect(hdc, &content, theme_border_color());
+}
+
+static void hide_git_panel(void);
+
+static LRESULT CALLBACK GitPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                             LPARAM lParam, UINT_PTR id, DWORD_PTR data) {
+    (void)id; (void)data;
+    switch (msg) {
+        case WM_SIZE:
+            size_git_panel(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_CTLCOLORBTN:
+            if (g_mainBkBrush) return (LRESULT)g_mainBkBrush;
+            break;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            paint_git_panel(hwnd, hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_PRINTCLIENT:
+            paint_git_panel(hwnd, (HDC)wParam);
+            return 0;
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case ID_GIT_REFRESH: refresh_git_status(); return 0;
+                case ID_GIT_STAGE_ALL: git_stage_all(); return 0;
+                case ID_GIT_COMMIT: git_commit_prompt(); return 0;
+                case ID_GIT_CLOSE: hide_git_panel(); return 0;
+            }
+            break;
+        case WM_NOTIFY: {
+            NMHDR *notification = (NMHDR *)lParam;
+            if (notification->hwndFrom != g_hGitTree) break;
+            if (notification->code == NM_CUSTOMDRAW)
+                return git_tree_customdraw((NMTVCUSTOMDRAW *)lParam);
+            if (notification->code == TVN_DELETEITEMW)
+                handle_git_tree_delete_item((NMTREEVIEWW *)lParam);
+            else if (notification->code == TVN_ITEMCHANGEDW)
+                handle_git_tree_item_changed((NMTVITEMCHANGE *)lParam);
+            else if (notification->code == NM_DBLCLK)
+                handle_git_tree_double_click(g_hGitTree);
+            else if (notification->code == NM_RCLICK)
+                handle_git_tree_mouse_context_menu(g_hGitTree);
+            return 0;
+        }
+        case WM_DRAWITEM: {
+            const DRAWITEMSTRUCT *dis = (const DRAWITEMSTRUCT *)lParam;
+            if (dis->CtlType == ODT_BUTTON) { draw_debug_panel_button(dis); return TRUE; }
+            break;
+        }
+        case WM_CTLCOLORSTATIC:
+            if (g_mainBkBrush) {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, theme_fg_color());
+                SetBkMode(hdc, TRANSPARENT);
+                return (LRESULT)g_mainBkBrush;
+            }
+            break;
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, GitPanelSubclassProc, 1);
+            break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void create_git_panel(HWND hwnd) {
+    g_hGitPanel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_CLIPCHILDREN,
+                                  0, 0, 0, 0, hwnd, (HMENU)(UINT_PTR)ID_GIT_PANEL,
+                                  GetModuleHandleW(NULL), NULL);
+    SetWindowSubclass(g_hGitPanel, GitPanelSubclassProc, 1, 0);
+    /* No WS_VISIBLE here, same as the file explorer's own tree: whether it's
+       actually shown follows the panel's own visibility, reasserted every
+       layout_git_panel() call below rather than fixed at creation time. */
+    g_hGitTree = CreateWindowExW(0, WC_TREEVIEWW, L"",
+        WS_CHILD | WS_VSCROLL | WS_TABSTOP |
+            TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS |
+            TVS_DISABLEDRAGDROP | TVS_CHECKBOXES,
+        0, 0, 0, 0, g_hGitPanel, (HMENU)(UINT_PTR)ID_GIT_TREE, GetModuleHandleW(NULL), NULL);
+    TreeView_SetExtendedStyle(g_hGitTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
+    TreeView_SetItemHeight(g_hGitTree, MulDiv(18, GetDpiForWindow(hwnd), 96));
+    SetWindowSubclass(g_hGitTree, GitTreeSubclassProc, 1, 0);
+    themed_scrollbar_attach(g_hGitTree, THEMED_SCROLL_TREEVIEW);
+    g_hGitRefresh = create_output_button(g_hGitPanel, L"Refresh", ID_GIT_REFRESH);
+    g_hGitStageAll = create_output_button(g_hGitPanel, L"Stage All", ID_GIT_STAGE_ALL);
+    g_hGitCommit = create_output_button(g_hGitPanel, L"Commit...", ID_GIT_COMMIT);
+    g_hGitClose = create_output_button(g_hGitPanel, L"X", ID_GIT_CLOSE);
+    ShowWindow(g_hGitPanel, g_gitPanelVisible ? SW_SHOW : SW_HIDE);
+    /* Applied here, not left to apply_output_panel_theme()'s call into
+       apply_git_panel_theme(): create_output_panel() (which makes that call)
+       runs before create_git_panel(), so g_hGitTree wouldn't exist yet and
+       the panel would start in the system's default colours until the next
+       theme change. Mirrors explorer_init()'s own explorer_apply_theme()
+       call in file_explorer.c for the same reason. */
+    apply_git_panel_theme();
+}
+
+/* The Git panel docks at the left or right edge, exactly like the file
+   explorer (see layout_explorer() in ui_shell.inc), carved out of whatever
+   area{} is left once the explorer has taken its own slice. */
+static void layout_git_panel(HWND hwnd, LayoutArea *area) {
+    if (!g_hGitPanel || !g_gitPanelVisible || g_focusMode) {
+        g_gitPanelSplitterRect = (RECT){0, 0, 0, 0};
+        if (g_hGitPanel) ShowWindow(g_hGitPanel, SW_HIDE);
+        return;
+    }
+    int dpi = GetDpiForWindow(hwnd);
+    if (g_gitPanelWidth < 0)
+        g_gitPanelWidth = MulDiv(GIT_PANEL_WIDTH, dpi, 96);
+    int minWidth = MulDiv(GIT_PANEL_MIN_WIDTH, dpi, 96);
+    int maxWidth = area->width * 2 / 3;
+    if (g_gitPanelWidth < minWidth) g_gitPanelWidth = minWidth;
+    if (maxWidth > minWidth && g_gitPanelWidth > maxWidth) g_gitPanelWidth = maxWidth;
+    if (g_gitPanelOnRight) {
+        int panelX = area->x + area->width - g_gitPanelWidth;
+        g_gitPanelSplitterRect = (RECT){ panelX - SPLITTER_WIDTH, area->y,
+                                        panelX, area->y + area->height };
+        MoveWindow(g_hGitPanel, panelX, area->y, g_gitPanelWidth, area->height, TRUE);
+        area->width -= g_gitPanelWidth + SPLITTER_WIDTH;
+    } else {
+        g_gitPanelSplitterRect = (RECT){ area->x + g_gitPanelWidth, area->y,
+                                        area->x + g_gitPanelWidth + SPLITTER_WIDTH, area->y + area->height };
+        MoveWindow(g_hGitPanel, area->x, area->y, g_gitPanelWidth, area->height, TRUE);
+        area->x += g_gitPanelWidth + SPLITTER_WIDTH;
+        area->width -= g_gitPanelWidth + SPLITTER_WIDTH;
+    }
+    if (area->width < 0) area->width = 0;
+    ShowWindow(g_hGitPanel, SW_SHOW);
+    if (g_hGitTree) ShowWindow(g_hGitTree, SW_SHOW);
+}
+
+static int git_panel_splitter_contains_x(int x) {
+    return g_gitPanelVisible && !g_focusMode &&
+           x >= g_gitPanelSplitterRect.left && x <= g_gitPanelSplitterRect.right;
+}
+
+static void hide_git_panel(void) {
+    if (!g_gitPanelVisible) return;
+    g_gitPanelVisible = 0;
+    relayout_and_save(g_hMainWnd);
+}
+
+/* View > Git Panel (Ctrl+Shift+G), and the status bar's "Open Git Panel". */
+static void show_git_panel(void) {
+    refresh_git_status();
+    render_git_panel();
+    if (!g_gitPanelVisible) {
+        g_gitPanelVisible = 1;
+        relayout_and_save(g_hMainWnd);
+    }
+    if (g_hGitTree) SetFocus(g_hGitTree);
+}
+
+static void toggle_git_panel(void) {
+    if (g_gitPanelVisible) hide_git_panel();
+    else show_git_panel();
+}
+
+static void toggle_git_panel_side(HWND hwnd) {
+    g_gitPanelOnRight = !g_gitPanelOnRight;
+    relayout_and_save(hwnd);
 }
