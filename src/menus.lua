@@ -214,6 +214,11 @@ return {
       { "&Skip Commit", "git.rebase_skip" },
       { "&Abort Rebase", "git.rebase_abort" },
     } },
+    { "Ta&g", {
+      { "&New Tag...", "git.tag_new" },
+      { "&Delete Tag...", "git.tag_delete" },
+      { "&Push Tags", "git.tag_push" },
+    } },
   } },
 
   { "&Plugins", {

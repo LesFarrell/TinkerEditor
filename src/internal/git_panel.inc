@@ -496,6 +496,71 @@ static void git_stash_drop_prompt(void) {
     free(stash);
 }
 
+static WCHAR *pick_git_tag(const WCHAR *title, const WCHAR *okLabel) {
+    int count = 0;
+    WCHAR **tags = git_list_refs(L"refs/tags", &count);
+    if (!tags || count == 0) {
+        MessageBoxW(g_hMainWnd, L"No tags were found in this repository.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        free_branch_list(tags, count);
+        return NULL;
+    }
+    int chosen = show_choice_dialog(title, L"Choose a tag:", tags, count, okLabel);
+    WCHAR *result = chosen >= 0 ? _wcsdup(tags[chosen]) : NULL;
+    free_branch_list(tags, count);
+    return result;
+}
+
+static void git_new_tag_prompt(void) {
+    if (!g_currentWorkspaceFolder) {
+        MessageBoxW(g_hMainWnd, L"Open a workspace folder to create a tag.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    WCHAR name[128] = L"";
+    if (!show_text_input(L"New Tag", L"Tag name:", L"", name, 128) || !name[0]) return;
+    if (reject_quoted_git_name(name)) return;
+    WCHAR message[256] = L"";
+    if (!show_text_input(L"New Tag", L"Tag message (optional - makes it an annotated tag):",
+                         L"", message, 256))
+        return;
+    if (wcschr(message, L'"')) {
+        MessageBoxW(g_hMainWnd, L"Tag messages can't contain a quotation mark.",
+                    L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    size_t capacity = wcslen(name) + wcslen(message) + 48;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (parameters) {
+        if (message[0]) swprintf(parameters, capacity, L"tag -a \"%ls\" -m \"%ls\"", name, message);
+        else swprintf(parameters, capacity, L"tag \"%ls\"", name);
+        run_git_mutating_output(parameters, L"Git New Tag");
+        free(parameters);
+    }
+}
+
+static void git_delete_tag_prompt(void) {
+    WCHAR *tag = pick_git_tag(L"Delete Tag", L"Delete");
+    if (!tag) return;
+    if (reject_quoted_git_name(tag)) { free(tag); return; }
+    WCHAR prompt[160];
+    swprintf(prompt, 160, L"Permanently delete tag %ls?", tag);
+    if (MessageBoxW(g_hMainWnd, prompt, L"Git", MB_YESNO | MB_ICONWARNING) == IDYES) {
+        size_t capacity = wcslen(tag) + 32;
+        WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+        if (parameters) {
+            swprintf(parameters, capacity, L"tag -d \"%ls\"", tag);
+            run_git_mutating_output(parameters, L"Git Delete Tag");
+            free(parameters);
+        }
+    }
+    free(tag);
+}
+
+static void git_push_tags(void) {
+    run_git_mutating_output(L"push --tags", L"Git Push Tags");
+}
+
 static void git_switch_to_branch(const WCHAR *branch, int remote) {
     if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 40;
@@ -585,10 +650,8 @@ static void git_delete_branch_prompt(void) {
     free(branch);
 }
 
-static void git_merge_prompt(void) {
-    WCHAR *branch = pick_git_branch(L"Merge Into Current Branch", L"Merge branch:", L"Merge", 1);
-    if (!branch) return;
-    if (reject_quoted_git_name(branch)) { free(branch); return; }
+static void git_merge_branch_into_current(const WCHAR *branch) {
+    if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -596,13 +659,17 @@ static void git_merge_prompt(void) {
         run_git_mutating_output(parameters, L"Git Merge");
         free(parameters);
     }
+}
+
+static void git_merge_prompt(void) {
+    WCHAR *branch = pick_git_branch(L"Merge Into Current Branch", L"Merge branch:", L"Merge", 1);
+    if (!branch) return;
+    git_merge_branch_into_current(branch);
     free(branch);
 }
 
-static void git_rebase_prompt(void) {
-    WCHAR *branch = pick_git_branch(L"Rebase Onto Branch", L"Rebase onto:", L"Rebase", 1);
-    if (!branch) return;
-    if (reject_quoted_git_name(branch)) { free(branch); return; }
+static void git_rebase_onto_branch(const WCHAR *branch) {
+    if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -610,7 +677,24 @@ static void git_rebase_prompt(void) {
         run_git_mutating_output(parameters, L"Git Rebase");
         free(parameters);
     }
+}
+
+static void git_rebase_prompt(void) {
+    WCHAR *branch = pick_git_branch(L"Rebase Onto Branch", L"Rebase onto:", L"Rebase", 1);
+    if (!branch) return;
+    git_rebase_onto_branch(branch);
     free(branch);
+}
+
+static void git_cherry_pick_commit(const WCHAR *hash) {
+    if (reject_quoted_git_name(hash)) return;
+    size_t capacity = wcslen(hash) + 32;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (parameters) {
+        swprintf(parameters, capacity, L"cherry-pick \"%ls\"", hash);
+        run_git_mutating_output(parameters, L"Git Cherry-pick");
+        free(parameters);
+    }
 }
 
 static void git_merge_continue(void) {
@@ -647,7 +731,8 @@ static void show_git_panel(void);
 /* The status bar's Git segment (see StatusSubclassProc) reaches every branch
    command through this one compact menu. */
 enum { GIT_MENU_PANEL = 1, GIT_MENU_SWITCH, GIT_MENU_NEW, GIT_MENU_DELETE,
-      GIT_MENU_MERGE, GIT_MENU_REBASE, GIT_MENU_PUSH, GIT_MENU_PULL, GIT_MENU_FETCH };
+      GIT_MENU_MERGE, GIT_MENU_REBASE, GIT_MENU_PUSH, GIT_MENU_PULL, GIT_MENU_FETCH,
+      GIT_MENU_TAG_NEW, GIT_MENU_TAG_DELETE, GIT_MENU_TAG_PUSH };
 
 static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
     HMENU menu = CreatePopupMenu();
@@ -664,6 +749,10 @@ static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
     AppendMenuW(menu, MF_STRING, GIT_MENU_PUSH, L"Push");
     AppendMenuW(menu, MF_STRING, GIT_MENU_PULL, L"Pull");
     AppendMenuW(menu, MF_STRING, GIT_MENU_FETCH, L"Fetch");
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_NEW, L"New Tag...");
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_DELETE, L"Delete Tag...");
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_PUSH, L"Push Tags");
     UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
                                   screenPoint.x, screenPoint.y, 0, hwnd, NULL);
     DestroyMenu(menu);
@@ -677,6 +766,9 @@ static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
         case GIT_MENU_PUSH: git_push(); break;
         case GIT_MENU_PULL: git_pull(); break;
         case GIT_MENU_FETCH: git_fetch(); break;
+        case GIT_MENU_TAG_NEW: git_new_tag_prompt(); break;
+        case GIT_MENU_TAG_DELETE: git_delete_tag_prompt(); break;
+        case GIT_MENU_TAG_PUSH: git_push_tags(); break;
     }
 }
 
@@ -961,7 +1053,7 @@ static HTREEITEM git_tree_item_at_message_pos(HWND tree, POINT *screenOut, UINT 
    the top of the message loop. */
 static WCHAR *g_gitPendingActionPath;
 static WCHAR g_gitPendingActionMark;
-static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff, 10 log, 11 blame */
+static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff, 10 log, 11 blame, 12 resolve in merge tool, 13 rebase onto, 14 merge branch into current */
 
 static void queue_git_panel_action(int action, const WCHAR *path, WCHAR mark) {
     WCHAR *copy = _wcsdup(path);
@@ -991,6 +1083,9 @@ static void run_pending_git_panel_action(void) {
         case 9: git_diff_panel_file(path, GIT_DIFF_UNTRACKED); break;
         case 10: git_log_panel_file(path); break;
         case 11: git_blame_panel_file(path); break;
+        case 12: git_resolve_conflict_in_merge_tool(path); break;
+        case 13: git_rebase_onto_branch(path); break;
+        case 14: git_merge_branch_into_current(path); break;
         default: git_stage_file(path); break; /* also how a conflict's resolution is marked */
     }
     free(path);
@@ -1029,7 +1124,7 @@ static void handle_git_tree_item_changed(NMTVITEMCHANGE *change) {
 }
 
 enum { GIT_CTX_STAGE = 1, GIT_CTX_UNSTAGE, GIT_CTX_DISCARD, GIT_CTX_DIFF, GIT_CTX_SWITCH, GIT_CTX_DELETE_BRANCH,
-       GIT_CTX_LOG, GIT_CTX_BLAME };
+       GIT_CTX_LOG, GIT_CTX_BLAME, GIT_CTX_MERGE, GIT_CTX_REBASE, GIT_CTX_MERGE_BRANCH };
 
 static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPoint) {
     if (!item) return;
@@ -1047,9 +1142,13 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
     if (!menu) { free(path); return; }
     if (kind == GIT_TREE_REMOTE_BRANCH) {
         AppendMenuW(menu, MF_STRING, GIT_CTX_SWITCH, L"Switch to This Branch");
+        AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE_BRANCH, L"Merge This Branch into Current");
+        AppendMenuW(menu, MF_STRING, GIT_CTX_REBASE, L"Rebase Current Branch onto This");
     } else if (kind == GIT_TREE_LOCAL_BRANCH) {
         if (mark != L'*') {
             AppendMenuW(menu, MF_STRING, GIT_CTX_SWITCH, L"Switch to This Branch");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE_BRANCH, L"Merge This Branch into Current");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_REBASE, L"Rebase Current Branch onto This");
             AppendMenuW(menu, MF_STRING, GIT_CTX_DELETE_BRANCH, L"Delete Branch...");
         }
     } else if (kind == GIT_TREE_STAGED_FILE) {
@@ -1066,6 +1165,8 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
         AppendMenuW(menu, MF_STRING, GIT_CTX_DISCARD, L"Discard Changes...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, GIT_CTX_DIFF, L"Open Diff");
+        if (kind == GIT_TREE_CONFLICT_FILE && g_externalMergeToolPath && g_externalMergeToolPath[0])
+            AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE, L"Resolve in Merge Tool");
         if (mark != L'?') {
             AppendMenuW(menu, MF_STRING, GIT_CTX_LOG, L"Show File History");
             AppendMenuW(menu, MF_STRING, GIT_CTX_BLAME, L"Blame File");
@@ -1090,6 +1191,9 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
         case GIT_CTX_DELETE_BRANCH: queue_git_panel_action(6, path, 0); break;
         case GIT_CTX_LOG: queue_git_panel_action(10, path, 0); break;
         case GIT_CTX_BLAME: queue_git_panel_action(11, path, 0); break;
+        case GIT_CTX_MERGE: queue_git_panel_action(12, path, 0); break;
+        case GIT_CTX_REBASE: queue_git_panel_action(13, path, 0); break;
+        case GIT_CTX_MERGE_BRANCH: queue_git_panel_action(14, path, 0); break;
     }
     free(path);
 }

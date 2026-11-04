@@ -386,3 +386,27 @@ void save_compiler_settings(void) {
                          g_compilerExtraFlags ? g_compilerExtraFlags : L"", path);
     free(path);
 }
+
+/* The Settings dialog's Git category: an optional external diff tool (e.g.
+   WinMerge, Beyond Compare, kdiff3) used in place of the built-in text diff
+   for single-file comparisons. Launched as "<path>" <left> <right>, the same
+   two-file convention those tools already support. */
+void load_git_settings(void) {
+    WCHAR *path = get_settings_path();
+    if (!path) return;
+    g_useExternalDiffTool = read_profile_int(L"Git", L"UseExternalDiffTool", 0, path) != 0;
+    g_externalDiffToolPath = read_profile_string(L"Git", L"DiffToolPath", path);
+    g_externalMergeToolPath = read_profile_string(L"Git", L"MergeToolPath", path);
+    free(path);
+}
+
+void save_git_settings(void) {
+    WCHAR *path = get_settings_path();
+    if (!path) return;
+    write_profile_int(L"Git", L"UseExternalDiffTool", g_useExternalDiffTool, path);
+    write_setting_string(L"Git", L"DiffToolPath",
+                         g_externalDiffToolPath ? g_externalDiffToolPath : L"", path);
+    write_setting_string(L"Git", L"MergeToolPath",
+                         g_externalMergeToolPath ? g_externalMergeToolPath : L"", path);
+    free(path);
+}

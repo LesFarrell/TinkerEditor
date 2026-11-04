@@ -172,6 +172,9 @@ WCHAR *g_zigBinOverride = NULL;   /* [Compiler] ZigPath: folder to search for zi
 WCHAR *g_luaBinOverride = NULL;   /* [Compiler] LuaPath: folder to search for a Lua interpreter instead of PATH */
 WCHAR *g_gdbBinOverride = NULL;   /* [Compiler] GdbPath: optional folder overriding bundled/PATH GDB */
 WCHAR *g_compilerExtraFlags = NULL; /* [Compiler] ExtraFlags appended to Run/Debug C/C++ builds; set via Settings > Compiler */
+int g_useExternalDiffTool = 0;      /* [Git] UseExternalDiffTool; set via Settings > Git */
+WCHAR *g_externalDiffToolPath = NULL; /* [Git] DiffToolPath: launched as "<path>" <left> <right> */
+WCHAR *g_externalMergeToolPath = NULL; /* [Git] MergeToolPath: launched as "<path>" <base> <local> <remote> <merged> */
 WCHAR *g_customCssPath = NULL;
 static WCHAR *g_debugLocationPath = NULL;
 static WCHAR *g_debugWorkingDirectory = NULL;
@@ -1381,6 +1384,7 @@ static void load_application_settings(const WCHAR *commandLineFile) {
     load_layout_settings();
     load_find_settings();
     load_compiler_settings();
+    load_git_settings();
     if (commandLineFile &&
         (language_for_path(commandLineFile)->id == LANG_MARKDOWN || image_file_path(commandLineFile))) {
         /* File-association/command-line launches of a Markdown file are

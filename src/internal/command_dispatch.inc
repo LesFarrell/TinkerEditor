@@ -387,6 +387,9 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_STASH_APPLY: git_stash_apply_prompt(); break;
         case IDM_GIT_STASH_POP: git_stash_pop(); break;
         case IDM_GIT_STASH_DROP: git_stash_drop_prompt(); break;
+        case IDM_GIT_TAG_NEW: git_new_tag_prompt(); break;
+        case IDM_GIT_TAG_DELETE: git_delete_tag_prompt(); break;
+        case IDM_GIT_TAG_PUSH: git_push_tags(); break;
         default: return 0;
     }
     return 1;

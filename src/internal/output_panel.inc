@@ -57,6 +57,12 @@ static int g_outputHistoryCount = 0;
 static int g_outputHistoryIndex = 0; /* g_outputHistoryCount while not browsing it */
 /* git diff --no-index returns 1 when it successfully found differences. */
 static int g_outputExitOneIsSuccess;
+/* True while the Run pane holds Git's own commit log (see GIT_LOG_COMMAND)
+   rather than a program's output, so its right-click menu can offer to
+   cherry-pick the commit under the pointer instead of Scintilla's default
+   cut/copy/paste menu. */
+static int g_outputIsGitLog;
+static void git_cherry_pick_commit(const WCHAR *hash); /* git_panel.inc */
 static OutputProcess *g_gitStatusProcess;
 static int g_gitStatusSession;
 static char *g_gitStatusOutput;
@@ -644,16 +650,197 @@ static void show_git_staged_diff(void) {
     run_git_output(GIT_DIFF_COMMAND L" --cached", L"Git Staged Diff");
 }
 
+typedef enum { GIT_DIFF_UNSTAGED, GIT_DIFF_STAGED, GIT_DIFF_UNTRACKED } GitDiffKind;
+
+/* Defined further down, alongside the rest of the synchronous git helpers. */
+static char *run_git_sync(const WCHAR *parameters, const WCHAR *directory, DWORD *exitCode);
+
+/* ---- External diff tool (Settings > Git) ---------------------------------
+   An optional alternative to the built-in text diff above, for comparing one
+   file at a time in whatever program the user prefers (WinMerge, Beyond
+   Compare, kdiff3, ...). Those tools are driven the same way regardless of
+   brand: launched as "<tool>" <left-file> <right-file>. The HEAD/index sides
+   of a comparison don't exist as real files, so they're first written out to
+   temp copies; the temp files are left behind for the tool's lifetime rather
+   than deleted right after it starts, the same tradeoff
+   git_commit_message_temp_path() documents for the commit-message temp file. */
+
+/* A fresh temp file holding `length` bytes of `data`, named with the same
+   extension as `likePath` (when it has one) so the external tool's own
+   syntax highlighting still applies. Caller frees the returned path. */
+static WCHAR *write_temp_diff_file(const WCHAR *likePath, const char *data, size_t length) {
+    WCHAR temporaryDirectory[MAX_PATH];
+    DWORD dirLength = GetTempPathW(MAX_PATH, temporaryDirectory);
+    if (!dirLength || dirLength >= MAX_PATH) return NULL;
+    const WCHAR *extension = likePath ? wcsrchr(likePath, L'.') : NULL;
+    WCHAR name[96];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"tinkeredit-diff-%lu-%llu%ls",
+             GetCurrentProcessId(), (unsigned long long)GetTickCount64(), extension ? extension : L"");
+    WCHAR *path = path_join(temporaryDirectory, name);
+    if (!path) return NULL;
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, NULL);
+    if (file == INVALID_HANDLE_VALUE) { free(path); return NULL; }
+    DWORD written = 0;
+    BOOL ok = length == 0 || WriteFile(file, data, (DWORD)length, &written, NULL);
+    CloseHandle(file);
+    if (!ok || written != length) { DeleteFileW(path); free(path); return NULL; }
+    return path;
+}
+
+/* `spec` is a git <rev>:<path> blob reference; its content is written to a
+   temp file, or an empty temp file when the blob doesn't exist (e.g. a newly
+   added file has no HEAD copy yet) - the same "nothing on this side"
+   convention --no-index already uses for untracked files above. */
+static WCHAR *git_blob_to_temp_file(const WCHAR *spec, const WCHAR *likePath) {
+    size_t capacity = wcslen(spec) + 16;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (!parameters) return NULL;
+    swprintf(parameters, capacity, L"show \"%ls\"", spec);
+    DWORD exitCode = 0;
+    char *output = run_git_sync(parameters, g_currentWorkspaceFolder, &exitCode);
+    free(parameters);
+    size_t length = (exitCode == 0 && output) ? strlen(output) : 0;
+    WCHAR *path = write_temp_diff_file(likePath, output ? output : "", length);
+    free(output);
+    return path;
+}
+
+/* "HEAD:path" or ":path" (prefix "HEAD:" or ":"), the spec git show wants. */
+static WCHAR *git_rev_spec(const WCHAR *prefix, const WCHAR *relativePath) {
+    size_t capacity = wcslen(prefix) + wcslen(relativePath) + 1;
+    WCHAR *spec = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (spec) swprintf(spec, capacity, L"%ls%ls", prefix, relativePath);
+    return spec;
+}
+
+static WCHAR *workspace_file_path(const WCHAR *relativePath) {
+    return g_currentWorkspaceFolder ? path_join(g_currentWorkspaceFolder, relativePath) : NULL;
+}
+
+/* g_currentFile's path relative to the open workspace, the repo-relative
+   form git show's <rev>:<path> needs; NULL when there's no workspace or the
+   file isn't under it (e.g. on a different drive). */
+static WCHAR *workspace_relative_file_path(void) {
+    if (!g_currentWorkspaceFolder || !g_currentFile) return NULL;
+    WCHAR relative[MAX_PATH];
+    if (!PathRelativePathToW(relative, g_currentWorkspaceFolder, FILE_ATTRIBUTE_DIRECTORY,
+                             g_currentFile, FILE_ATTRIBUTE_NORMAL)) return NULL;
+    const WCHAR *trimmed = relative;
+    while (trimmed[0] == L'.' && trimmed[1] == L'\\') trimmed += 2;
+    return _wcsdup(trimmed);
+}
+
+/* Runs `command` detached, reporting `failureMessage` if it couldn't start. */
+static void spawn_external_tool(WCHAR *command, const WCHAR *failureMessage) {
+    if (!command) return;
+    STARTUPINFOW startup = { sizeof(startup) };
+    PROCESS_INFORMATION info = {0};
+    if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info)) {
+        CloseHandle(info.hThread);
+        CloseHandle(info.hProcess);
+    } else {
+        MessageBoxW(g_hMainWnd, failureMessage, L"Git", MB_OK | MB_ICONWARNING);
+    }
+    free(command);
+}
+
+/* Starts the user's chosen external diff tool over two files. */
+static void launch_external_diff_tool(const WCHAR *leftPath, const WCHAR *rightPath) {
+    if (!g_externalDiffToolPath || !g_externalDiffToolPath[0]) {
+        MessageBoxW(g_hMainWnd, L"Set a diff tool in Settings > Git first.", L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    size_t capacity = wcslen(g_externalDiffToolPath) + wcslen(leftPath) + wcslen(rightPath) + 10;
+    WCHAR *command = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (command) swprintf(command, capacity, L"\"%ls\" \"%ls\" \"%ls\"",
+                          g_externalDiffToolPath, leftPath, rightPath);
+    spawn_external_tool(command, L"Could not start the diff tool. Check the path in Settings > Git.");
+}
+
+static void git_external_diff_file(const WCHAR *relativePath, GitDiffKind kind) {
+    WCHAR *left = NULL, *right = NULL;
+    if (kind == GIT_DIFF_UNTRACKED) {
+        left = write_temp_diff_file(relativePath, "", 0);
+        right = workspace_file_path(relativePath);
+    } else {
+        WCHAR *headSpec = git_rev_spec(L"HEAD:", relativePath);
+        if (headSpec) left = git_blob_to_temp_file(headSpec, relativePath);
+        free(headSpec);
+        if (kind == GIT_DIFF_STAGED) {
+            WCHAR *indexSpec = git_rev_spec(L":", relativePath);
+            if (indexSpec) right = git_blob_to_temp_file(indexSpec, relativePath);
+            free(indexSpec);
+        } else {
+            right = workspace_file_path(relativePath);
+        }
+    }
+    if (left && right) launch_external_diff_tool(left, right);
+    else MessageBoxW(g_hMainWnd, L"Could not prepare the files to compare.", L"Git", MB_OK | MB_ICONWARNING);
+    free(left);
+    free(right);
+}
+
+/* ---- External merge tool (Settings > Git) --------------------------------
+   Resolves one conflicted file in whatever three/four-pane merge program the
+   user prefers. The index holds all three sides of an unresolved conflict as
+   stages 1 (base/common ancestor), 2 (ours) and 3 (theirs) - see `git help
+   merge` - so, like the diff tool above, each side is written to its own
+   temp file; the "merged" side is the real working-tree file itself, opened
+   directly so the tool's save edits it in place. Launched as "<tool>" <base>
+   <local> <remote> <merged>, the order git's own mergetool.<name>.cmd
+   convention (contrib/mergetools) uses, so a tool already packaged for git
+   mergetool needs no changes to work here. */
+static void git_resolve_conflict_in_merge_tool(const WCHAR *relativePath) {
+    if (!g_externalMergeToolPath || !g_externalMergeToolPath[0]) {
+        MessageBoxW(g_hMainWnd, L"Set a merge tool in Settings > Git first.", L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    WCHAR *baseSpec = git_rev_spec(L":1:", relativePath);
+    WCHAR *localSpec = git_rev_spec(L":2:", relativePath);
+    WCHAR *remoteSpec = git_rev_spec(L":3:", relativePath);
+    WCHAR *base = baseSpec ? git_blob_to_temp_file(baseSpec, relativePath) : NULL;
+    WCHAR *local = localSpec ? git_blob_to_temp_file(localSpec, relativePath) : NULL;
+    WCHAR *remote = remoteSpec ? git_blob_to_temp_file(remoteSpec, relativePath) : NULL;
+    free(baseSpec);
+    free(localSpec);
+    free(remoteSpec);
+    WCHAR *merged = workspace_file_path(relativePath);
+    if (base && local && remote && merged) {
+        size_t capacity = wcslen(g_externalMergeToolPath) + wcslen(base) + wcslen(local) +
+                          wcslen(remote) + wcslen(merged) + 20;
+        WCHAR *command = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+        if (command) swprintf(command, capacity, L"\"%ls\" \"%ls\" \"%ls\" \"%ls\" \"%ls\"",
+                              g_externalMergeToolPath, base, local, remote, merged);
+        spawn_external_tool(command, L"Could not start the merge tool. Check the path in Settings > Git.");
+    } else {
+        MessageBoxW(g_hMainWnd, L"Could not prepare the files to merge.", L"Git", MB_OK | MB_ICONWARNING);
+    }
+    free(base);
+    free(local);
+    free(remote);
+    free(merged);
+}
+
 static void show_git_file_diff_kind(int staged) {
     if (!g_currentFile) {
         MessageBoxW(g_hMainWnd, L"Save the document before opening its Git diff.",
                     L"Git", MB_OK | MB_ICONINFORMATION);
         return;
     }
+    int untracked = !staged && git_status_for_path(g_currentFile) == L'?';
+    if (g_useExternalDiffTool) {
+        WCHAR *relativePath = workspace_relative_file_path();
+        if (relativePath) {
+            git_external_diff_file(relativePath, untracked ? GIT_DIFF_UNTRACKED
+                                   : staged ? GIT_DIFF_STAGED : GIT_DIFF_UNSTAGED);
+            free(relativePath);
+            return;
+        }
+    }
     size_t capacity = wcslen(g_currentFile) + wcslen(GIT_DIFF_COMMAND) + 40;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (!parameters) return;
-    if (!staged && git_status_for_path(g_currentFile) == L'?') {
+    if (untracked) {
         swprintf(parameters, capacity, GIT_DIFF_COMMAND L" --no-index -- /dev/null \"%ls\"", g_currentFile);
         run_git_output_ex(parameters, L"Git Untracked File Diff", 1);
     } else {
@@ -667,9 +854,11 @@ static void show_git_file_diff_kind(int staged) {
 static void show_git_file_diff(void) { show_git_file_diff_kind(0); }
 static void show_git_staged_file_diff(void) { show_git_file_diff_kind(1); }
 
-typedef enum { GIT_DIFF_UNSTAGED, GIT_DIFF_STAGED, GIT_DIFF_UNTRACKED } GitDiffKind;
-
 static void git_diff_panel_file(const WCHAR *relativePath, GitDiffKind kind) {
+    if (g_useExternalDiffTool) {
+        git_external_diff_file(relativePath, kind);
+        return;
+    }
     size_t capacity = wcslen(relativePath) + wcslen(GIT_DIFF_COMMAND) + 40;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (!parameters) return;
@@ -1089,6 +1278,7 @@ static int run_in_output_panel(const WCHAR *file, const WCHAR *parameters,
     }
     end_output_program(pane);
     clear_output_pane(pane);
+    g_outputIsGitLog = wcscmp(title, L"Git File History") == 0;
     size_t noteCapacity = wcslen(title) + (g_currentFile ? wcslen(g_currentFile) : 0) + 8;
     WCHAR *note = (WCHAR *)malloc(noteCapacity * sizeof(WCHAR));
     if (note) {
@@ -1184,6 +1374,61 @@ static LRESULT CALLBACK OutputInputSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+/* Git log lines are GIT_LOG_COMMAND's own %h hash followed by a space; pulls
+   just the hash out of whichever line sits under screenPt (a Scintilla point
+   in screen coordinates), or NULL if that line isn't a commit line. Caller
+   frees. */
+static WCHAR *git_log_hash_at_point(HWND view, POINT screenPt) {
+    POINT clientPt = screenPt;
+    ScreenToClient(view, &clientPt);
+    Sci_Position position = (Sci_Position)SendMessageA(view, SCI_POSITIONFROMPOINT,
+                                                       (WPARAM)clientPt.x, (LPARAM)clientPt.y);
+    if (position < 0) return NULL;
+    Sci_Position lineNumber = (Sci_Position)SendMessageA(view, SCI_LINEFROMPOSITION, (WPARAM)position, 0);
+    Sci_Position length = (Sci_Position)SendMessageA(view, SCI_LINELENGTH, (WPARAM)lineNumber, 0);
+    if (length <= 0) return NULL;
+    char *line = (char *)malloc((size_t)length + 1);
+    if (!line) return NULL;
+    SendMessageA(view, SCI_GETLINE, (WPARAM)lineNumber, (LPARAM)line);
+    line[length] = 0;
+    size_t hashLength = 0;
+    while (hashLength < (size_t)length && isxdigit((unsigned char)line[hashLength])) hashLength++;
+    WCHAR *hash = (hashLength > 0 && hashLength < (size_t)length && line[hashLength] == ' ')
+                ? to_wide_n(line, hashLength, NULL) : NULL;
+    free(line);
+    return hash;
+}
+
+/* The Run pane's right-click menu while it holds a Git log (see
+   g_outputIsGitLog): offers to cherry-pick the commit under the pointer
+   instead of Scintilla's default cut/copy/paste menu. */
+static void show_git_log_context_menu(HWND view, LPARAM lParam) {
+    POINT screenPt;
+    if ((LONG)lParam == -1) {
+        RECT client;
+        GetClientRect(view, &client);
+        screenPt.x = client.left + 12;
+        screenPt.y = client.top + 12;
+        ClientToScreen(view, &screenPt);
+    } else {
+        screenPt.x = GET_X_LPARAM(lParam);
+        screenPt.y = GET_Y_LPARAM(lParam);
+    }
+    WCHAR *hash = git_log_hash_at_point(view, screenPt);
+    if (!hash) return;
+    HMENU menu = CreatePopupMenu();
+    if (menu) {
+        WCHAR label[64];
+        swprintf(label, 64, L"Cherry-pick %ls", hash);
+        AppendMenuW(menu, MF_STRING, 1, label);
+        if (TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                           screenPt.x, screenPt.y, 0, g_hOutputPanel, NULL) == 1)
+            git_cherry_pick_commit(hash);
+        DestroyMenu(menu);
+    }
+    free(hash);
+}
+
 /* This view is read-only scrollback, not where typed input goes - clicking
    it (e.g. to select or copy output text) would otherwise leave Scintilla's
    own click handling with keyboard focus on a control that can't take input,
@@ -1194,6 +1439,10 @@ static LRESULT CALLBACK OutputInputSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
 static LRESULT CALLBACK OutputViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                                UINT_PTR id, DWORD_PTR data) {
     (void)data;
+    if (msg == WM_CONTEXTMENU && g_outputIsGitLog && (int)id - 1 == OUTPUT_TAB_RUN) {
+        show_git_log_context_menu(hwnd, lParam);
+        return 0;
+    }
     if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         SetFocus(g_hOutputInput);

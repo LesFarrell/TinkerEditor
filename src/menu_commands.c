@@ -170,6 +170,9 @@ static const MenuCommand COMMANDS[] = {
     {"git.stash_drop", IDM_GIT_STASH_DROP, NULL},
     {"git.log_file", IDM_GIT_LOG_FILE, NULL},
     {"git.blame_file", IDM_GIT_BLAME_FILE, NULL},
+    {"git.tag_new", IDM_GIT_TAG_NEW, NULL},
+    {"git.tag_delete", IDM_GIT_TAG_DELETE, NULL},
+    {"git.tag_push", IDM_GIT_TAG_PUSH, NULL},
 
     {"run.run_file", IDM_RUN_FILE, "Ctrl+F5"},
     {"run.debug_file", IDM_DEBUG_FILE, "F5"},

@@ -79,5 +79,8 @@ extern WCHAR *g_zigBinOverride;
 extern WCHAR *g_luaBinOverride;
 extern WCHAR *g_gdbBinOverride;
 extern WCHAR *g_compilerExtraFlags;
+extern int g_useExternalDiffTool;
+extern WCHAR *g_externalDiffToolPath;
+extern WCHAR *g_externalMergeToolPath;
 
 #endif
