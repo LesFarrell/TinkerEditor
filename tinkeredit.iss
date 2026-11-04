@@ -16,9 +16,9 @@
 ; Version, publisher, and copyright are read from tinkeredit.exe's own
 ; VERSIONINFO (tinkeredit.rc) - the same source Help > About shows - so the
 ; installer can never disagree with the program it installs.
-#define MyAppVersion GetStringFileInfo(MyAppExePath, "ProductVersion")
-#define MyAppPublisher GetStringFileInfo(MyAppExePath, "CompanyName")
-#define MyAppCopyright GetStringFileInfo(MyAppExePath, "LegalCopyright")
+#define MyAppVersion GetStringFileInfo(MyAppExePath, "Tinker Editor")
+#define MyAppPublisher GetStringFileInfo(MyAppExePath, "Les Farrell")
+#define MyAppCopyright GetStringFileInfo(MyAppExePath, "(c) 2026 Les Farrell")
 
 [Setup]
 AppId={{8C1FAAE2-ED8A-4F09-BF45-2CD28C46BD0F}
@@ -54,6 +54,7 @@ Name: "openwith"; Description: "Add {#MyAppName} to ""Open with"" for text, HTML
 Source: "dist\tinkeredit.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Scintilla.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+
 ; Offline preview assets.
 Source: "dist\preview_shell.html"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\github-markdown.css"; DestDir: "{app}"; Flags: ignoreversion
@@ -64,6 +65,7 @@ Source: "dist\highlight-github.min.css"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\highlight-github-dark.min.css"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\katex\*"; DestDir: "{app}\katex"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "dist\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; Application and redistributed-component licences.
 Source: "dist\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
