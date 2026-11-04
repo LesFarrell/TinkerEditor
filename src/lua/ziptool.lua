@@ -84,14 +84,6 @@ end
 -- Returns:
 --   (number) decoded integer (may lose precision > 2^53).
 --
--- Uses le32 to reconstruct the low/high 32-bit halves.
-local function le64(s, i)
-    i = i or 1
-    local lo = le32(s, i)
-    local hi = le32(s, i+4)
-    return lo + hi * 4294967296
-end
-
 local MAX32 = 0xFFFFFFFF
 local MAX16 = 0xFFFF
 
@@ -555,6 +547,25 @@ local function le32(s, i)
     local c = s:byte(i+2) or 0
     local d = s:byte(i+3) or 0
     return a + b * 256 + c * 65536 + d * 16777216
+end
+
+-- Read a little-endian 64-bit unsigned integer from string `s` at index `i`.
+--
+-- Args:
+--   s (string): byte string containing the value.
+--   i (number): 1-based index in s where the 8-byte value starts.
+-- Returns:
+--   (number) decoded integer (may lose precision > 2^53).
+--
+-- Uses le32 to reconstruct the low/high 32-bit halves. Must come after le32
+-- is declared above it (as a local), not before: a `local function` earlier
+-- in the file that calls `le32` would resolve to the global le32, which is
+-- never assigned.
+local function le64(s, i)
+    i = i or 1
+    local lo = le32(s, i)
+    local hi = le32(s, i+4)
+    return lo + hi * 4294967296
 end
 
 -- find_eocd_and_zip64

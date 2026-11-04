@@ -250,13 +250,15 @@ void save_layout_settings(void) {
     if (g_hMainWnd) {
         RECT client;
         GetClientRect(g_hMainWnd, &client);
-        /* g_splitterPos is relative to the content area beside the explorer
-           and Git panels, not the full client width - explorer_panel_width()
-           and git_panel_width() are the same widths layout() shrinks that
-           content area by (on whichever side each panel is docked), so the
-           persisted ratio has to be measured against the same narrower
-           width or it drifts by however wide the panels currently are. */
-        int sidePanelsWidth = explorer_panel_width(g_focusMode) + git_panel_width(g_focusMode);
+        /* g_splitterPos is relative to the content area beside the explorer,
+           Git and Merge panels, not the full client width -
+           explorer_panel_width(), git_panel_width() and merge_panel_width()
+           are the same widths layout() shrinks that content area by (on
+           whichever side each panel is docked), so the persisted ratio has
+           to be measured against the same narrower width or it drifts by
+           however wide the panels currently are. */
+        int sidePanelsWidth = explorer_panel_width(g_focusMode) + git_panel_width(g_focusMode) +
+                              merge_panel_width(g_focusMode);
         if (g_splitterPos >= 0) {
             int available = client.right - sidePanelsWidth - SPLITTER_WIDTH;
             if (available > 0) g_splitterRatio = clamp_ratio(MulDiv(g_splitterPos, 1000, available));

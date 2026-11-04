@@ -1250,10 +1250,11 @@ static void toggle_editor(HWND hwnd) {
 static void toggle_panel_sides(HWND hwnd) {
     RECT rc;
     GetClientRect(hwnd, &rc);
-    /* g_splitterPos is relative to the content area beside the explorer
-       and Git panels, so the mirrored position has to be computed against
-       that narrower width, not the full client width. */
-    int contentWidth = rc.right - explorer_panel_width(g_focusMode) - git_panel_width(g_focusMode);
+    /* g_splitterPos is relative to the content area beside the explorer,
+       Git and Merge panels, so the mirrored position has to be computed
+       against that narrower width, not the full client width. */
+    int contentWidth = rc.right - explorer_panel_width(g_focusMode) - git_panel_width(g_focusMode) -
+                       merge_panel_width(g_focusMode);
     if (g_splitterPos >= 0 && contentWidth > SPLITTER_WIDTH) {
         g_splitterPos = contentWidth - SPLITTER_WIDTH - g_splitterPos;
     }

@@ -22,6 +22,7 @@
 
 #include "cmark-gfm.h"
 #include "cmark-gfm-core-extensions.h"
+#include "markdown.h"
 
 typedef struct {
     char *data;
@@ -91,7 +92,9 @@ static cmark_node *parse_markdown(const char *text, size_t length, cmark_llist *
         }
         renderExtensions = cmark_llist_append(mem, renderExtensions, extension);
     }
-    cmark_parser_feed(parser, text ? text : "", length);
+    size_t bodyLength = 0;
+    const char *body = skip_yaml_front_matter(text ? text : "", length, &bodyLength);
+    cmark_parser_feed(parser, body, bodyLength);
     cmark_node *document = cmark_parser_finish(parser);
     cmark_parser_free(parser);
     if (!document) {
@@ -665,10 +668,13 @@ static void docx_render_block(cmark_node *node, strbuf *out, int indentTwips) {
             else snprintf(marker, sizeof(marker), "\xE2\x80\xA2 "); /* "• ", a bullet */
             docx_emit_run(out, marker, strlen(marker), 0, 0, 0, 0);
             cmark_node *first = cmark_node_first_child(item);
-            if (first && cmark_node_get_type(first) == CMARK_NODE_PARAGRAPH)
-                docx_render_inline_children(first, out, 0, 0, 0);
+            int firstIsParagraph = first && cmark_node_get_type(first) == CMARK_NODE_PARAGRAPH;
+            if (firstIsParagraph) docx_render_inline_children(first, out, 0, 0, 0);
             sb_append(out, "</w:p>");
-            for (cmark_node *c = first ? cmark_node_next(first) : NULL; c; c = cmark_node_next(c))
+            /* A non-paragraph first child (a nested list, blockquote, code
+               block, ...) has nothing already rendered above to skip past -
+               render it as its own block instead of dropping it. */
+            for (cmark_node *c = firstIsParagraph ? cmark_node_next(first) : first; c; c = cmark_node_next(c))
                 docx_render_block(c, out, indentTwips + 360);
         }
         break;

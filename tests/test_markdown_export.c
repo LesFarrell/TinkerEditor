@@ -48,6 +48,7 @@ int main(void) {
     expect_text_contains("italic stripped", "This is *italic* text.\n", "This is italic text.");
     expect_text_not_contains("no asterisks remain", "**bold** and *italic*\n", "*");
     expect_text_contains("heading text kept", "# Title\n\nBody.\n", "Title");
+    expect_text_not_contains("front matter hidden", "---\ntitle: Secret\n---\n\nBody.\n", "Secret");
     expect_text_contains("bullet list marker", "- one\n- two\n", "- one");
     expect_text_contains("ordered list marker", "1. first\n2. second\n", "1. first");
     expect_text_contains("link shows url", "[site](https://example.com)\n", "site (https://example.com)");

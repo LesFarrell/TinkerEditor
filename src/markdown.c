@@ -28,7 +28,7 @@ static const char *next_line(const char *line_end, const char *end) {
 /* Returns the Markdown body and its length, hiding a leading YAML front
    matter block. The length lets callers skip a second full scan of the
    document on every preview render. */
-static const char *skip_yaml_front_matter(const char *text, size_t text_length,
+const char *skip_yaml_front_matter(const char *text, size_t text_length,
                                           size_t *body_length) {
     const char *start = text;
     const char *end = text + text_length;

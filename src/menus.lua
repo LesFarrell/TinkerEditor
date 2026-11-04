@@ -54,7 +54,7 @@ return {
     { "&Close Tab", "file.close_tab" },
     { "&Reopen Closed Tab", "file.reopen_closed_tab" },
     { "Go &Back", "file.go_back" },
-    { "Reopen with &Encoding", {
+    { "Reopen wit&h Encoding", {
       { "UTF-&8", "file.reopen_utf8" },
       { "UTF-16 &LE", "file.reopen_utf16le" },
       { "UTF-16 &BE", "file.reopen_utf16be" },
