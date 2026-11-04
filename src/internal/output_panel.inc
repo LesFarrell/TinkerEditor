@@ -40,21 +40,29 @@ typedef struct OutputPane {
 
 static OutputPane g_outputPanes[OUTPUT_TAB_COUNT];
 static TerminalView *g_terminalView; /* the Terminal tab; g_outputPanes[OUTPUT_TAB_TERMINAL].view is its window */
-static int g_outputTab = OUTPUT_TAB_RUN;
+/* Persisted (settings.c) so the Output Panel reopens on whichever tab was
+   active last, rather than always Run. Not static for that reason - plain
+   global, like g_outputPanelVisible and friends. */
+int g_outputTab = OUTPUT_TAB_RUN;
 /* Visual and keyboard traversal order. Keep the enum values stable because
    the panes themselves are indexed by them; Output remains the default tab
    but is placed last in the strip. */
 static const int OUTPUT_TAB_ORDER[OUTPUT_TAB_COUNT] = {
-    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_GIT, OUTPUT_TAB_RUN
+    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_RUN
 };
 static int g_outputNextSession = 1;
 static HWND g_hOutputClear, g_hOutputStop, g_hOutputClose;
-static HWND g_hGitRefresh, g_hGitCommit, g_hGitStageAll;
 static char *g_outputHistory[OUTPUT_HISTORY_SIZE];
 static int g_outputHistoryCount = 0;
 static int g_outputHistoryIndex = 0; /* g_outputHistoryCount while not browsing it */
 /* git diff --no-index returns 1 when it successfully found differences. */
 static int g_outputExitOneIsSuccess;
+/* True while the Run pane holds Git's own commit log (see GIT_LOG_COMMAND)
+   rather than a program's output, so its right-click menu can offer to
+   cherry-pick the commit under the pointer instead of Scintilla's default
+   cut/copy/paste menu. */
+static int g_outputIsGitLog;
+static void git_cherry_pick_commit(const WCHAR *hash); /* git_panel.inc */
 static OutputProcess *g_gitStatusProcess;
 static int g_gitStatusSession;
 static char *g_gitStatusOutput;
@@ -75,8 +83,11 @@ static WCHAR *g_gitStatusWorkspace;
    file. Git status collection stays beside the shared OutputProcess runner;
    branch caches, commands and TreeView interaction live behind this boundary. */
 static void render_git_panel(void);
+static void render_merge_panel_list(void); /* merge_panel.inc */
 static void git_stage_all(void);
 static void git_commit_prompt(void);
+static void git_commit_and_push_prompt(void);
+static void git_push(void);
 static void shutdown_git_panel(void);
 static void handle_git_tree_delete_item(NMTREEVIEWW *info);
 static void handle_git_tree_item_changed(NMTVITEMCHANGE *change);
@@ -141,7 +152,6 @@ static int tab_running(int tab) {
 static HWND active_output_focus_target(void) {
     if (g_outputTab == OUTPUT_TAB_TERMINAL) return terminal_view_window(g_terminalView);
     if (g_outputTab == OUTPUT_TAB_PROBLEMS) return g_outputPanes[OUTPUT_TAB_PROBLEMS].view;
-    if (g_outputTab == OUTPUT_TAB_GIT) return g_outputPanes[OUTPUT_TAB_GIT].view;
     if (g_outputTab == OUTPUT_TAB_DEBUG) return g_hDebugVariables;
     return g_hOutputInput;
 }
@@ -203,29 +213,31 @@ static void apply_debug_tab_theme(void) {
     }
 }
 
+/* Implemented in git_panel.inc/merge_panel.inc, included later in the unity build. */
+static void apply_git_panel_theme(void);
+static void apply_git_panel_font(const char *faceUtf8);
+static void apply_merge_panel_theme(void);
+static void apply_merge_panel_font(const char *faceUtf8);
+
 static void apply_output_panel_theme(void) {
     if (!g_hOutputPanel) return;
     apply_output_view_theme(g_outputPanes[OUTPUT_TAB_RUN].view);
     apply_output_view_theme(g_outputPanes[OUTPUT_TAB_PROBLEMS].view);
     apply_output_view_theme(g_hOutputInput);
-    if (g_outputPanes[OUTPUT_TAB_GIT].view) {
-        apply_explorer_theme(g_outputPanes[OUTPUT_TAB_GIT].view);
-        TreeView_SetBkColor(g_outputPanes[OUTPUT_TAB_GIT].view, theme_bg_color());
-        TreeView_SetTextColor(g_outputPanes[OUTPUT_TAB_GIT].view, theme_fg_color());
-        themed_scrollbar_refresh(g_outputPanes[OUTPUT_TAB_GIT].view);
-        InvalidateRect(g_outputPanes[OUTPUT_TAB_GIT].view, NULL, TRUE);
-    }
     const ThemePalette *p = theme_palette();
     const COLORREF *ansi = g_editorDarkMode ? OUTPUT_ANSI_DARK : OUTPUT_ANSI_LIGHT;
     terminal_view_apply_theme(g_terminalView, ansi, p->fg, p->bg);
     apply_debug_tab_theme();
+    apply_git_panel_theme();
+    apply_merge_panel_theme();
     InvalidateRect(g_hOutputPanel, NULL, TRUE);
-    HWND buttons[] = { g_outputPanes[0].tab, g_outputPanes[1].tab,
-                       g_outputPanes[2].tab, g_outputPanes[3].tab, g_outputPanes[4].tab,
-                       g_hOutputClear, g_hOutputStop, g_hOutputClose,
-                       g_hDebugContinue, g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut,
-                       g_hGitRefresh, g_hGitStageAll, g_hGitCommit };
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+    HWND buttons[OUTPUT_TAB_COUNT + 7];
+    size_t n = 0;
+    for (int i = 0; i < OUTPUT_TAB_COUNT; i++) buttons[n++] = g_outputPanes[i].tab;
+    buttons[n++] = g_hOutputClear; buttons[n++] = g_hOutputStop; buttons[n++] = g_hOutputClose;
+    buttons[n++] = g_hDebugContinue; buttons[n++] = g_hDebugStepOver;
+    buttons[n++] = g_hDebugStepInto; buttons[n++] = g_hDebugStepOut;
+    for (size_t i = 0; i < n; i++)
         if (buttons[i]) InvalidateRect(buttons[i], NULL, TRUE);
 }
 
@@ -242,6 +254,8 @@ static void apply_output_panel_font(const char *faceUtf8) {
         apply_output_view_theme(views[i]); /* its STYLECLEARALL spreads the font */
     }
     terminal_view_apply_font(g_terminalView, faceUtf8, g_fontPointSize, g_fontWeight);
+    apply_git_panel_font(faceUtf8);
+    apply_merge_panel_font(faceUtf8);
 }
 
 /* The Stop button and the tab labels follow what's running. */
@@ -520,6 +534,7 @@ finished:
     for (int i = 0; i < g_documentStore.count; i++) update_tab_label(i);
     update_status_position();
     render_git_panel();
+    render_merge_panel_list();
 }
 
 static void handle_git_status_chunk(OutputChunk *chunk) {
@@ -641,16 +656,197 @@ static void show_git_staged_diff(void) {
     run_git_output(GIT_DIFF_COMMAND L" --cached", L"Git Staged Diff");
 }
 
+typedef enum { GIT_DIFF_UNSTAGED, GIT_DIFF_STAGED, GIT_DIFF_UNTRACKED } GitDiffKind;
+
+/* Defined further down, alongside the rest of the synchronous git helpers. */
+static char *run_git_sync(const WCHAR *parameters, const WCHAR *directory, DWORD *exitCode);
+
+/* ---- External diff tool (Settings > Git) ---------------------------------
+   An optional alternative to the built-in text diff above, for comparing one
+   file at a time in whatever program the user prefers (WinMerge, Beyond
+   Compare, kdiff3, ...). Those tools are driven the same way regardless of
+   brand: launched as "<tool>" <left-file> <right-file>. The HEAD/index sides
+   of a comparison don't exist as real files, so they're first written out to
+   temp copies; the temp files are left behind for the tool's lifetime rather
+   than deleted right after it starts, the same tradeoff
+   git_commit_message_temp_path() documents for the commit-message temp file. */
+
+/* A fresh temp file holding `length` bytes of `data`, named with the same
+   extension as `likePath` (when it has one) so the external tool's own
+   syntax highlighting still applies. Caller frees the returned path. */
+static WCHAR *write_temp_diff_file(const WCHAR *likePath, const char *data, size_t length) {
+    WCHAR temporaryDirectory[MAX_PATH];
+    DWORD dirLength = GetTempPathW(MAX_PATH, temporaryDirectory);
+    if (!dirLength || dirLength >= MAX_PATH) return NULL;
+    const WCHAR *extension = likePath ? wcsrchr(likePath, L'.') : NULL;
+    WCHAR name[96];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"tinkeredit-diff-%lu-%llu%ls",
+             GetCurrentProcessId(), (unsigned long long)GetTickCount64(), extension ? extension : L"");
+    WCHAR *path = path_join(temporaryDirectory, name);
+    if (!path) return NULL;
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, NULL);
+    if (file == INVALID_HANDLE_VALUE) { free(path); return NULL; }
+    DWORD written = 0;
+    BOOL ok = length == 0 || WriteFile(file, data, (DWORD)length, &written, NULL);
+    CloseHandle(file);
+    if (!ok || written != length) { DeleteFileW(path); free(path); return NULL; }
+    return path;
+}
+
+/* `spec` is a git <rev>:<path> blob reference; its content is written to a
+   temp file, or an empty temp file when the blob doesn't exist (e.g. a newly
+   added file has no HEAD copy yet) - the same "nothing on this side"
+   convention --no-index already uses for untracked files above. */
+static WCHAR *git_blob_to_temp_file(const WCHAR *spec, const WCHAR *likePath) {
+    size_t capacity = wcslen(spec) + 16;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (!parameters) return NULL;
+    swprintf(parameters, capacity, L"show \"%ls\"", spec);
+    DWORD exitCode = 0;
+    char *output = run_git_sync(parameters, g_currentWorkspaceFolder, &exitCode);
+    free(parameters);
+    size_t length = (exitCode == 0 && output) ? strlen(output) : 0;
+    WCHAR *path = write_temp_diff_file(likePath, output ? output : "", length);
+    free(output);
+    return path;
+}
+
+/* "HEAD:path" or ":path" (prefix "HEAD:" or ":"), the spec git show wants. */
+static WCHAR *git_rev_spec(const WCHAR *prefix, const WCHAR *relativePath) {
+    size_t capacity = wcslen(prefix) + wcslen(relativePath) + 1;
+    WCHAR *spec = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (spec) swprintf(spec, capacity, L"%ls%ls", prefix, relativePath);
+    return spec;
+}
+
+static WCHAR *workspace_file_path(const WCHAR *relativePath) {
+    return g_currentWorkspaceFolder ? path_join(g_currentWorkspaceFolder, relativePath) : NULL;
+}
+
+/* g_currentFile's path relative to the open workspace, the repo-relative
+   form git show's <rev>:<path> needs; NULL when there's no workspace or the
+   file isn't under it (e.g. on a different drive). */
+static WCHAR *workspace_relative_file_path(void) {
+    if (!g_currentWorkspaceFolder || !g_currentFile) return NULL;
+    WCHAR relative[MAX_PATH];
+    if (!PathRelativePathToW(relative, g_currentWorkspaceFolder, FILE_ATTRIBUTE_DIRECTORY,
+                             g_currentFile, FILE_ATTRIBUTE_NORMAL)) return NULL;
+    const WCHAR *trimmed = relative;
+    while (trimmed[0] == L'.' && trimmed[1] == L'\\') trimmed += 2;
+    return _wcsdup(trimmed);
+}
+
+/* Runs `command` detached, reporting `failureMessage` if it couldn't start. */
+static void spawn_external_tool(WCHAR *command, const WCHAR *failureMessage) {
+    if (!command) return;
+    STARTUPINFOW startup = { sizeof(startup) };
+    PROCESS_INFORMATION info = {0};
+    if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info)) {
+        CloseHandle(info.hThread);
+        CloseHandle(info.hProcess);
+    } else {
+        MessageBoxW(g_hMainWnd, failureMessage, L"Git", MB_OK | MB_ICONWARNING);
+    }
+    free(command);
+}
+
+/* Starts the user's chosen external diff tool over two files. */
+static void launch_external_diff_tool(const WCHAR *leftPath, const WCHAR *rightPath) {
+    if (!g_externalDiffToolPath || !g_externalDiffToolPath[0]) {
+        MessageBoxW(g_hMainWnd, L"Set a diff tool in Settings > Git first.", L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    size_t capacity = wcslen(g_externalDiffToolPath) + wcslen(leftPath) + wcslen(rightPath) + 10;
+    WCHAR *command = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (command) swprintf(command, capacity, L"\"%ls\" \"%ls\" \"%ls\"",
+                          g_externalDiffToolPath, leftPath, rightPath);
+    spawn_external_tool(command, L"Could not start the diff tool. Check the path in Settings > Git.");
+}
+
+static void git_external_diff_file(const WCHAR *relativePath, GitDiffKind kind) {
+    WCHAR *left = NULL, *right = NULL;
+    if (kind == GIT_DIFF_UNTRACKED) {
+        left = write_temp_diff_file(relativePath, "", 0);
+        right = workspace_file_path(relativePath);
+    } else {
+        WCHAR *headSpec = git_rev_spec(L"HEAD:", relativePath);
+        if (headSpec) left = git_blob_to_temp_file(headSpec, relativePath);
+        free(headSpec);
+        if (kind == GIT_DIFF_STAGED) {
+            WCHAR *indexSpec = git_rev_spec(L":", relativePath);
+            if (indexSpec) right = git_blob_to_temp_file(indexSpec, relativePath);
+            free(indexSpec);
+        } else {
+            right = workspace_file_path(relativePath);
+        }
+    }
+    if (left && right) launch_external_diff_tool(left, right);
+    else MessageBoxW(g_hMainWnd, L"Could not prepare the files to compare.", L"Git", MB_OK | MB_ICONWARNING);
+    free(left);
+    free(right);
+}
+
+/* ---- External merge tool (Settings > Git) --------------------------------
+   Resolves one conflicted file in whatever three/four-pane merge program the
+   user prefers. The index holds all three sides of an unresolved conflict as
+   stages 1 (base/common ancestor), 2 (ours) and 3 (theirs) - see `git help
+   merge` - so, like the diff tool above, each side is written to its own
+   temp file; the "merged" side is the real working-tree file itself, opened
+   directly so the tool's save edits it in place. Launched as "<tool>" <base>
+   <local> <remote> <merged>, the order git's own mergetool.<name>.cmd
+   convention (contrib/mergetools) uses, so a tool already packaged for git
+   mergetool needs no changes to work here. */
+static void git_resolve_conflict_in_merge_tool(const WCHAR *relativePath) {
+    if (!g_externalMergeToolPath || !g_externalMergeToolPath[0]) {
+        MessageBoxW(g_hMainWnd, L"Set a merge tool in Settings > Git first.", L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    WCHAR *baseSpec = git_rev_spec(L":1:", relativePath);
+    WCHAR *localSpec = git_rev_spec(L":2:", relativePath);
+    WCHAR *remoteSpec = git_rev_spec(L":3:", relativePath);
+    WCHAR *base = baseSpec ? git_blob_to_temp_file(baseSpec, relativePath) : NULL;
+    WCHAR *local = localSpec ? git_blob_to_temp_file(localSpec, relativePath) : NULL;
+    WCHAR *remote = remoteSpec ? git_blob_to_temp_file(remoteSpec, relativePath) : NULL;
+    free(baseSpec);
+    free(localSpec);
+    free(remoteSpec);
+    WCHAR *merged = workspace_file_path(relativePath);
+    if (base && local && remote && merged) {
+        size_t capacity = wcslen(g_externalMergeToolPath) + wcslen(base) + wcslen(local) +
+                          wcslen(remote) + wcslen(merged) + 20;
+        WCHAR *command = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+        if (command) swprintf(command, capacity, L"\"%ls\" \"%ls\" \"%ls\" \"%ls\" \"%ls\"",
+                              g_externalMergeToolPath, base, local, remote, merged);
+        spawn_external_tool(command, L"Could not start the merge tool. Check the path in Settings > Git.");
+    } else {
+        MessageBoxW(g_hMainWnd, L"Could not prepare the files to merge.", L"Git", MB_OK | MB_ICONWARNING);
+    }
+    free(base);
+    free(local);
+    free(remote);
+    free(merged);
+}
+
 static void show_git_file_diff_kind(int staged) {
     if (!g_currentFile) {
         MessageBoxW(g_hMainWnd, L"Save the document before opening its Git diff.",
                     L"Git", MB_OK | MB_ICONINFORMATION);
         return;
     }
+    int untracked = !staged && git_status_for_path(g_currentFile) == L'?';
+    if (g_useExternalDiffTool) {
+        WCHAR *relativePath = workspace_relative_file_path();
+        if (relativePath) {
+            git_external_diff_file(relativePath, untracked ? GIT_DIFF_UNTRACKED
+                                   : staged ? GIT_DIFF_STAGED : GIT_DIFF_UNSTAGED);
+            free(relativePath);
+            return;
+        }
+    }
     size_t capacity = wcslen(g_currentFile) + wcslen(GIT_DIFF_COMMAND) + 40;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (!parameters) return;
-    if (!staged && git_status_for_path(g_currentFile) == L'?') {
+    if (untracked) {
         swprintf(parameters, capacity, GIT_DIFF_COMMAND L" --no-index -- /dev/null \"%ls\"", g_currentFile);
         run_git_output_ex(parameters, L"Git Untracked File Diff", 1);
     } else {
@@ -664,9 +860,11 @@ static void show_git_file_diff_kind(int staged) {
 static void show_git_file_diff(void) { show_git_file_diff_kind(0); }
 static void show_git_staged_file_diff(void) { show_git_file_diff_kind(1); }
 
-typedef enum { GIT_DIFF_UNSTAGED, GIT_DIFF_STAGED, GIT_DIFF_UNTRACKED } GitDiffKind;
-
 static void git_diff_panel_file(const WCHAR *relativePath, GitDiffKind kind) {
+    if (g_useExternalDiffTool) {
+        git_external_diff_file(relativePath, kind);
+        return;
+    }
     size_t capacity = wcslen(relativePath) + wcslen(GIT_DIFF_COMMAND) + 40;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (!parameters) return;
@@ -734,6 +932,13 @@ static int g_gitSyncSession;
 static int g_gitSyncDone;
 static DWORD g_gitSyncExitCode;
 static int g_gitRunPending; /* the Run tab's current command mutates the repo; refresh status when it finishes */
+/* Set by git_commit_prompt()/git_commit_and_push_prompt() (git_panel.inc):
+   the temp file holding the commit message passed to `git commit -F`, so it
+   can be deleted once the run finishes rather than right after starting it
+   (the process reads it asynchronously). */
+static WCHAR *g_gitCommitTempFile;
+/* Set alongside it: push once the commit that's currently running succeeds. */
+static int g_gitPushAfterCommit;
 
 static void handle_git_sync_chunk(OutputChunk *chunk) {
     if (chunk->session == g_gitSyncSession && !g_gitSyncDone) {
@@ -962,7 +1167,15 @@ static void handle_output_chunk(OutputChunk *chunk) {
             update_output_controls();
             if (g_gitRunPending) {
                 g_gitRunPending = 0;
+                if (g_gitCommitTempFile) {
+                    DeleteFileW(g_gitCommitTempFile);
+                    free(g_gitCommitTempFile);
+                    g_gitCommitTempFile = NULL;
+                }
                 refresh_git_status();
+                int pushAfterCommit = g_gitPushAfterCommit;
+                g_gitPushAfterCommit = 0;
+                if (pushAfterCommit && !failed) git_push();
             }
         }
     }
@@ -1042,6 +1255,11 @@ static void toggle_output_panel(void) {
     else show_output_panel(g_outputTab, 1);
 }
 
+static void toggle_output_panel_side(HWND hwnd) {
+    g_outputPanelOnRight = !g_outputPanelOnRight;
+    relayout_and_save(hwnd);
+}
+
 /* View > Terminal (Ctrl+Shift+`). */
 static void show_terminal(void) {
     show_output_panel(OUTPUT_TAB_TERMINAL, 1);
@@ -1066,6 +1284,7 @@ static int run_in_output_panel(const WCHAR *file, const WCHAR *parameters,
     }
     end_output_program(pane);
     clear_output_pane(pane);
+    g_outputIsGitLog = wcscmp(title, L"Git File History") == 0;
     size_t noteCapacity = wcslen(title) + (g_currentFile ? wcslen(g_currentFile) : 0) + 8;
     WCHAR *note = (WCHAR *)malloc(noteCapacity * sizeof(WCHAR));
     if (note) {
@@ -1161,6 +1380,61 @@ static LRESULT CALLBACK OutputInputSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+/* Git log lines are GIT_LOG_COMMAND's own %h hash followed by a space; pulls
+   just the hash out of whichever line sits under screenPt (a Scintilla point
+   in screen coordinates), or NULL if that line isn't a commit line. Caller
+   frees. */
+static WCHAR *git_log_hash_at_point(HWND view, POINT screenPt) {
+    POINT clientPt = screenPt;
+    ScreenToClient(view, &clientPt);
+    Sci_Position position = (Sci_Position)SendMessageA(view, SCI_POSITIONFROMPOINT,
+                                                       (WPARAM)clientPt.x, (LPARAM)clientPt.y);
+    if (position < 0) return NULL;
+    Sci_Position lineNumber = (Sci_Position)SendMessageA(view, SCI_LINEFROMPOSITION, (WPARAM)position, 0);
+    Sci_Position length = (Sci_Position)SendMessageA(view, SCI_LINELENGTH, (WPARAM)lineNumber, 0);
+    if (length <= 0) return NULL;
+    char *line = (char *)malloc((size_t)length + 1);
+    if (!line) return NULL;
+    SendMessageA(view, SCI_GETLINE, (WPARAM)lineNumber, (LPARAM)line);
+    line[length] = 0;
+    size_t hashLength = 0;
+    while (hashLength < (size_t)length && isxdigit((unsigned char)line[hashLength])) hashLength++;
+    WCHAR *hash = (hashLength > 0 && hashLength < (size_t)length && line[hashLength] == ' ')
+                ? to_wide_n(line, hashLength, NULL) : NULL;
+    free(line);
+    return hash;
+}
+
+/* The Run pane's right-click menu while it holds a Git log (see
+   g_outputIsGitLog): offers to cherry-pick the commit under the pointer
+   instead of Scintilla's default cut/copy/paste menu. */
+static void show_git_log_context_menu(HWND view, LPARAM lParam) {
+    POINT screenPt;
+    if ((LONG)lParam == -1) {
+        RECT client;
+        GetClientRect(view, &client);
+        screenPt.x = client.left + 12;
+        screenPt.y = client.top + 12;
+        ClientToScreen(view, &screenPt);
+    } else {
+        screenPt.x = GET_X_LPARAM(lParam);
+        screenPt.y = GET_Y_LPARAM(lParam);
+    }
+    WCHAR *hash = git_log_hash_at_point(view, screenPt);
+    if (!hash) return;
+    HMENU menu = CreatePopupMenu();
+    if (menu) {
+        WCHAR label[64];
+        swprintf(label, 64, L"Cherry-pick %ls", hash);
+        AppendMenuW(menu, MF_STRING, 1, label);
+        if (TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                           screenPt.x, screenPt.y, 0, g_hOutputPanel, NULL) == 1)
+            git_cherry_pick_commit(hash);
+        DestroyMenu(menu);
+    }
+    free(hash);
+}
+
 /* This view is read-only scrollback, not where typed input goes - clicking
    it (e.g. to select or copy output text) would otherwise leave Scintilla's
    own click handling with keyboard focus on a control that can't take input,
@@ -1171,6 +1445,10 @@ static LRESULT CALLBACK OutputInputSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
 static LRESULT CALLBACK OutputViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                                UINT_PTR id, DWORD_PTR data) {
     (void)data;
+    if (msg == WM_CONTEXTMENU && g_outputIsGitLog && (int)id - 1 == OUTPUT_TAB_RUN) {
+        show_git_log_context_menu(hwnd, lParam);
+        return 0;
+    }
     if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) {
         LRESULT result = DefSubclassProc(hwnd, msg, wParam, lParam);
         SetFocus(g_hOutputInput);
@@ -1389,8 +1667,7 @@ static OutputPanelLayout output_panel_layout(HWND panel) {
    below it; the Run tab keeps the two separate. */
 static RECT output_content_rect(const OutputPanelLayout *layout) {
     RECT rect = layout->view;
-    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS ||
-        g_outputTab == OUTPUT_TAB_GIT)
+    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS)
         rect.bottom = layout->inputBox.bottom;
     return rect;
 }
@@ -1416,11 +1693,6 @@ static int active_output_buttons(OutputHeaderButton *buttons, int dpi) {
     } else if (g_outputTab == OUTPUT_TAB_PROBLEMS) {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputClear, buttonWidth };
-    } else if (g_outputTab == OUTPUT_TAB_GIT) {
-        int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
-        buttons[n++] = (OutputHeaderButton){ g_hGitCommit, buttonWidth };
-        buttons[n++] = (OutputHeaderButton){ g_hGitStageAll, buttonWidth };
-        buttons[n++] = (OutputHeaderButton){ g_hGitRefresh, buttonWidth };
     } else {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputStop, buttonWidth };
@@ -1456,8 +1728,7 @@ static void size_output_panel(HWND panel) {
        isn't active are hidden outright, rather than left stacked underneath
        the active tab's. */
     HWND inactiveButtons[] = { g_hOutputClear, g_hOutputStop, g_hDebugContinue,
-                               g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut,
-                               g_hGitRefresh, g_hGitStageAll, g_hGitCommit };
+                               g_hDebugStepOver, g_hDebugStepInto, g_hDebugStepOut };
     for (size_t i = 0; i < sizeof(inactiveButtons) / sizeof(inactiveButtons[0]); i++)
         ShowWindow(inactiveButtons[i], SW_HIDE);
     int tabsRight = layout.pad + OUTPUT_TAB_COUNT * tabWidth;
@@ -1479,7 +1750,7 @@ static void size_output_panel(HWND panel) {
        view gets its own content rect: the Terminal tab's spans the input
        box's space too, since it has no separate input line. */
     for (int i = 0; i < OUTPUT_TAB_COUNT; i++) {
-        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS || i == OUTPUT_TAB_GIT)
+        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS)
                      ? output_content_rect(&layout) : layout.view;
         MoveWindow(g_outputPanes[i].view, content.left + 1, content.top + 1,
                    content.right - content.left - 2, content.bottom - content.top - 2, TRUE);
@@ -1511,8 +1782,7 @@ static void paint_output_panel(HWND panel, HDC hdc) {
     OutputPanelLayout layout = output_panel_layout(panel);
     RECT content = output_content_rect(&layout);
     frame_rect(hdc, &content, theme_border_color());
-    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS &&
-        g_outputTab != OUTPUT_TAB_GIT)
+    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS)
         frame_rect(hdc, &layout.inputBox, theme_border_color());
 }
 
@@ -1561,20 +1831,6 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
                     select_output_tab(OUTPUT_TAB_DEBUG);
                     SetFocus(g_hDebugVariables);
                     return 0;
-                case ID_OUTPUT_TAB_GIT:
-                    refresh_git_status();
-                    select_output_tab(OUTPUT_TAB_GIT);
-                    SetFocus(g_outputPanes[OUTPUT_TAB_GIT].view);
-                    return 0;
-                case ID_GIT_REFRESH:
-                    refresh_git_status();
-                    return 0;
-                case ID_GIT_STAGE_ALL:
-                    git_stage_all();
-                    return 0;
-                case ID_GIT_COMMIT:
-                    git_commit_prompt();
-                    return 0;
                 case IDM_DEBUG_CONTINUE: case IDM_DEBUG_STEP_OVER:
                 case IDM_DEBUG_STEP_INTO: case IDM_DEBUG_STEP_OUT:
                     /* debugger.inc's run_debugger_command() is reached through
@@ -1610,22 +1866,11 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
             break;
         case WM_NOTIFY: {
             NMHDR *notification = (NMHDR *)lParam;
-            HWND gitTree = g_outputPanes[OUTPUT_TAB_GIT].view;
-            if (notification->hwndFrom == gitTree && notification->code == NM_CUSTOMDRAW)
-                return git_tree_customdraw((NMTVCUSTOMDRAW *)lParam);
             if (notification->code == SCN_DOUBLECLICK) {
                 for (int i = 0; i < OUTPUT_TAB_COUNT; i++)
                     if (notification->hwndFrom == g_outputPanes[i].view)
                         open_output_location(&g_outputPanes[i],
                                              ((struct SCNotification *)lParam)->position);
-            } else if (notification->hwndFrom == gitTree && notification->code == TVN_DELETEITEMW) {
-                handle_git_tree_delete_item((NMTREEVIEWW *)lParam);
-            } else if (notification->hwndFrom == gitTree && notification->code == TVN_ITEMCHANGEDW) {
-                handle_git_tree_item_changed((NMTVITEMCHANGE *)lParam);
-            } else if (notification->hwndFrom == gitTree && notification->code == NM_DBLCLK) {
-                handle_git_tree_double_click(gitTree);
-            } else if (notification->hwndFrom == gitTree && notification->code == NM_RCLICK) {
-                handle_git_tree_mouse_context_menu(gitTree);
             } else if (notification->code == TVN_EXITED) {
                 update_output_controls();
             } else if (notification->code == TVN_RESTART_REQUESTED) {
@@ -1685,10 +1930,9 @@ static void create_output_panel(HWND hwnd) {
                                      0, 0, 0, 0, hwnd, (HMENU)ID_OUTPUT_PANEL, GetModuleHandleW(NULL), NULL);
     SetWindowSubclass(g_hOutputPanel, OutputPanelSubclassProc, 1, 0);
     static const WCHAR *const labels[OUTPUT_TAB_COUNT] =
-        { L"Output", L"Terminal", L"Problems", L"Debug", L"Git" };
+        { L"Output", L"Terminal", L"Problems", L"Debug" };
     static const int tabIds[OUTPUT_TAB_COUNT] = { ID_OUTPUT_TAB_RUN, ID_OUTPUT_TAB_TERMINAL,
-                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG,
-                                                  ID_OUTPUT_TAB_GIT };
+                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG };
     for (int position = 0; position < OUTPUT_TAB_COUNT; position++) {
         int tab = OUTPUT_TAB_ORDER[position];
         g_outputPanes[tab].tab = create_output_button(g_hOutputPanel, labels[tab], tabIds[tab]);
@@ -1718,19 +1962,6 @@ static void create_output_panel(HWND hwnd) {
     themed_scrollbar_attach(problemsPane->view, THEMED_SCROLL_SCINTILLA);
     SetWindowSubclass(problemsPane->view, OutputViewSubclassProc,
                       (UINT_PTR)(OUTPUT_TAB_PROBLEMS + 1), 0);
-
-    /* Unlike the Scintilla-based tabs, the Git tab is a checkbox TreeView -
-       see the "Git panel's own tab" section above for why. */
-    OutputPane *gitPane = &g_outputPanes[OUTPUT_TAB_GIT];
-    gitPane->view = CreateWindowExW(0, WC_TREEVIEWW, L"",
-        WS_CHILD | (g_outputTab == OUTPUT_TAB_GIT ? WS_VISIBLE : 0) | WS_VSCROLL | WS_TABSTOP |
-            TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS |
-            TVS_DISABLEDRAGDROP | TVS_CHECKBOXES,
-        0, 0, 0, 0, g_hOutputPanel, (HMENU)(UINT_PTR)(ID_OUTPUT_VIEW + 2), GetModuleHandleW(NULL), NULL);
-    TreeView_SetExtendedStyle(gitPane->view, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
-    TreeView_SetItemHeight(gitPane->view, MulDiv(18, GetDpiForWindow(hwnd), 96));
-    SetWindowSubclass(gitPane->view, GitTreeSubclassProc, 1, 0);
-    themed_scrollbar_attach(gitPane->view, THEMED_SCROLL_TREEVIEW);
 
     g_terminalView = terminal_view_create(g_hOutputPanel, ID_TERMINAL_VIEW);
     g_outputPanes[OUTPUT_TAB_TERMINAL].view = terminal_view_window(g_terminalView);
@@ -1771,12 +2002,6 @@ static void create_output_panel(HWND hwnd) {
     g_hOutputClear = create_output_button(g_hOutputPanel, L"Clear", ID_OUTPUT_CLEAR);
     g_hOutputStop = create_output_button(g_hOutputPanel, L"Stop", ID_OUTPUT_STOP);
     g_hOutputClose = create_output_button(g_hOutputPanel, L"X", ID_OUTPUT_CLOSE);
-    g_hGitRefresh = create_output_button(g_hOutputPanel, L"Refresh", ID_GIT_REFRESH);
-    g_hGitStageAll = create_output_button(g_hOutputPanel, L"Stage All", ID_GIT_STAGE_ALL);
-    g_hGitCommit = create_output_button(g_hOutputPanel, L"Commit...", ID_GIT_COMMIT);
-    ShowWindow(g_hGitRefresh, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_hGitStageAll, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
-    ShowWindow(g_hGitCommit, g_outputTab == OUTPUT_TAB_GIT ? SW_SHOW : SW_HIDE);
     g_hOutputInput = create_output_scintilla(g_hOutputPanel, ID_OUTPUT_INPUT, 1);
     SendMessageA(g_hOutputInput, SCI_SETVSCROLLBAR, FALSE, 0);
     SendMessageA(g_hOutputInput, SCI_SETHSCROLLBAR, FALSE, 0);

@@ -51,6 +51,7 @@ extern int g_markChangedLines;
 extern int g_indentUseSpaces;
 extern int g_tabWidth;
 extern int g_outlineVisible;
+extern int g_outlineOnLeft;
 extern int g_minimapVisible;
 extern int g_editorZoom;
 extern int g_largeFileThresholdMB;
@@ -62,6 +63,9 @@ extern int g_splitEditorRatio;
 extern int g_splitEditorVertical;
 extern int g_outputPanelVisible;
 extern int g_outputPanelHeight;
+extern int g_outputPanelOnRight;
+extern int g_outputPanelWidth;
+extern int g_outputTab; /* which of OUTPUT_TAB_RUN/TERMINAL/PROBLEMS/DEBUG (tinkeredit.h) was last active */
 extern int g_runInConsole;
 extern int g_commandLinePreviewMode;
 extern RECT g_savedWindowRect;
@@ -75,5 +79,8 @@ extern WCHAR *g_zigBinOverride;
 extern WCHAR *g_luaBinOverride;
 extern WCHAR *g_gdbBinOverride;
 extern WCHAR *g_compilerExtraFlags;
+extern int g_useExternalDiffTool;
+extern WCHAR *g_externalDiffToolPath;
+extern WCHAR *g_externalMergeToolPath;
 
 #endif

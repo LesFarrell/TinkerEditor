@@ -11,6 +11,7 @@
 #include "plugin_settings.h"
 #include "text_codec.h"
 #include "text_search.h" /* SEARCH_* find options */
+#include "tinkeredit.h" /* OUTPUT_TAB_RUN/OUTPUT_TAB_COUNT, for g_outputTab */
 
 /* Persisted settings: normally %APPDATA%\tinkeredit\settings.json, or
    portable-data\settings.json when portable.mode is beside the executable. */
@@ -167,6 +168,7 @@ void load_layout_settings(void) {
     if (g_tabWidth < 1) g_tabWidth = 1;
     if (g_tabWidth > 16) g_tabWidth = 16;
     g_outlineVisible = read_profile_int(L"View", L"OutlineVisible", g_outlineVisible, path) != 0;
+    g_outlineOnLeft = read_profile_int(L"View", L"OutlineOnLeft", 0, path) != 0;
     g_minimapVisible = read_profile_int(L"View", L"MinimapVisible", g_minimapVisible, path) != 0;
     g_explorerVisible = read_profile_int(L"View", L"ExplorerVisible", g_explorerVisible, path) != 0;
     g_explorerWidthRatio = clamp_ratio(read_profile_int(L"View", L"ExplorerWidthRatio", g_explorerWidthRatio, path));
@@ -174,6 +176,13 @@ void load_layout_settings(void) {
        only have a ratio, which layout() still uses when this key is absent. */
     int explorerWidth = read_profile_int(L"View", L"ExplorerWidth", -1, path);
     g_explorerWidth = explorerWidth > 0 ? explorerWidth : -1;
+    g_gitPanelVisible = read_profile_int(L"View", L"GitPanelVisible", 0, path) != 0;
+    int gitPanelWidth = read_profile_int(L"View", L"GitPanelWidth", -1, path);
+    g_gitPanelWidth = gitPanelWidth > 0 ? gitPanelWidth : -1;
+    g_gitPanelOnRight = read_profile_int(L"View", L"GitPanelOnRight", 1, path) != 0;
+    g_mergePanelVisible = read_profile_int(L"View", L"MergePanelVisible", 0, path) != 0;
+    int mergePanelWidth = read_profile_int(L"View", L"MergePanelWidth", -1, path);
+    g_mergePanelWidth = mergePanelWidth > 0 ? mergePanelWidth : -1;
     g_editorZoom = read_profile_int(L"View", L"EditorZoom", g_editorZoom, path);
     if (g_editorZoom < -10) g_editorZoom = -10;
     if (g_editorZoom > 20) g_editorZoom = 20;
@@ -193,6 +202,11 @@ void load_layout_settings(void) {
     g_outputPanelVisible = read_profile_int(L"View", L"OutputPanelVisible", 0, path) != 0;
     int outputHeight = read_profile_int(L"View", L"OutputPanelHeight", -1, path);
     g_outputPanelHeight = outputHeight > 0 ? outputHeight : -1;
+    g_outputPanelOnRight = read_profile_int(L"View", L"OutputPanelOnRight", 0, path) != 0;
+    int outputWidth = read_profile_int(L"View", L"OutputPanelWidth", -1, path);
+    g_outputPanelWidth = outputWidth > 0 ? outputWidth : -1;
+    g_outputTab = read_profile_int(L"View", L"OutputTab", OUTPUT_TAB_RUN, path);
+    if (g_outputTab < 0 || g_outputTab >= OUTPUT_TAB_COUNT) g_outputTab = OUTPUT_TAB_RUN;
     g_runInConsole = read_profile_int(L"View", L"RunInSeparateConsole", 0, path) != 0;
 
     int left = read_profile_int(L"Window", L"Left", 0, path);
@@ -222,6 +236,7 @@ void save_layout_settings(void) {
     write_profile_int(L"View", L"UseSpacesForIndent", g_indentUseSpaces, path);
     write_profile_int(L"View", L"TabWidth", g_tabWidth, path);
     write_profile_int(L"View", L"OutlineVisible", g_outlineVisible, path);
+    write_profile_int(L"View", L"OutlineOnLeft", g_outlineOnLeft, path);
     write_profile_int(L"View", L"MinimapVisible", g_minimapVisible, path);
     write_profile_int(L"View", L"ExplorerVisible", g_explorerVisible, path);
     write_profile_int(L"View", L"EditorZoom", g_editorZoom, path);
@@ -235,14 +250,15 @@ void save_layout_settings(void) {
     if (g_hMainWnd) {
         RECT client;
         GetClientRect(g_hMainWnd, &client);
-        /* g_splitterPos is relative to the content area right of the
-           explorer panel, not the full client width - explorer_content_x()
-           is the same offset layout() shifts that content area by, so the
+        /* g_splitterPos is relative to the content area beside the explorer
+           and Git panels, not the full client width - explorer_panel_width()
+           and git_panel_width() are the same widths layout() shrinks that
+           content area by (on whichever side each panel is docked), so the
            persisted ratio has to be measured against the same narrower
-           width or it drifts by however wide the panel currently is. */
-        int contentX = explorer_content_x(g_focusMode);
+           width or it drifts by however wide the panels currently are. */
+        int sidePanelsWidth = explorer_panel_width(g_focusMode) + git_panel_width(g_focusMode);
         if (g_splitterPos >= 0) {
-            int available = client.right - contentX - SPLITTER_WIDTH;
+            int available = client.right - sidePanelsWidth - SPLITTER_WIDTH;
             if (available > 0) g_splitterRatio = clamp_ratio(MulDiv(g_splitterPos, 1000, available));
         }
         if (g_explorerWidth >= 0 && client.right > 0)
@@ -252,12 +268,23 @@ void save_layout_settings(void) {
     write_profile_int(L"View", L"ExplorerWidthRatio", g_explorerWidthRatio, path);
     if (g_explorerWidth > 0)
         write_profile_int(L"View", L"ExplorerWidth", g_explorerWidth, path);
+    write_profile_int(L"View", L"GitPanelVisible", g_gitPanelVisible, path);
+    if (g_gitPanelWidth > 0)
+        write_profile_int(L"View", L"GitPanelWidth", g_gitPanelWidth, path);
+    write_profile_int(L"View", L"GitPanelOnRight", g_gitPanelOnRight, path);
+    write_profile_int(L"View", L"MergePanelVisible", g_mergePanelVisible, path);
+    if (g_mergePanelWidth > 0)
+        write_profile_int(L"View", L"MergePanelWidth", g_mergePanelWidth, path);
     write_profile_int(L"View", L"SplitEditorVisible", g_splitEditorVisible, path);
     write_profile_int(L"View", L"SplitEditorRatio", g_splitEditorRatio, path);
     write_profile_int(L"View", L"SplitEditorVertical", g_splitEditorVertical, path);
     write_profile_int(L"View", L"OutputPanelVisible", g_outputPanelVisible, path);
     if (g_outputPanelHeight > 0)
         write_profile_int(L"View", L"OutputPanelHeight", g_outputPanelHeight, path);
+    write_profile_int(L"View", L"OutputPanelOnRight", g_outputPanelOnRight, path);
+    if (g_outputPanelWidth > 0)
+        write_profile_int(L"View", L"OutputPanelWidth", g_outputPanelWidth, path);
+    write_profile_int(L"View", L"OutputTab", g_outputTab, path);
     write_profile_int(L"View", L"RunInSeparateConsole", g_runInConsole, path);
 
     WINDOWPLACEMENT placement = {0};
@@ -363,5 +390,29 @@ void save_compiler_settings(void) {
                          g_gdbBinOverride ? g_gdbBinOverride : L"", path);
     write_setting_string(L"Compiler", L"ExtraFlags",
                          g_compilerExtraFlags ? g_compilerExtraFlags : L"", path);
+    free(path);
+}
+
+/* The Settings dialog's Git category: an optional external diff tool (e.g.
+   WinMerge, Beyond Compare, kdiff3) used in place of the built-in text diff
+   for single-file comparisons. Launched as "<path>" <left> <right>, the same
+   two-file convention those tools already support. */
+void load_git_settings(void) {
+    WCHAR *path = get_settings_path();
+    if (!path) return;
+    g_useExternalDiffTool = read_profile_int(L"Git", L"UseExternalDiffTool", 0, path) != 0;
+    g_externalDiffToolPath = read_profile_string(L"Git", L"DiffToolPath", path);
+    g_externalMergeToolPath = read_profile_string(L"Git", L"MergeToolPath", path);
+    free(path);
+}
+
+void save_git_settings(void) {
+    WCHAR *path = get_settings_path();
+    if (!path) return;
+    write_profile_int(L"Git", L"UseExternalDiffTool", g_useExternalDiffTool, path);
+    write_setting_string(L"Git", L"DiffToolPath",
+                         g_externalDiffToolPath ? g_externalDiffToolPath : L"", path);
+    write_setting_string(L"Git", L"MergeToolPath",
+                         g_externalMergeToolPath ? g_externalMergeToolPath : L"", path);
     free(path);
 }

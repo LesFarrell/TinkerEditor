@@ -48,6 +48,9 @@
 #include "file_io.h"
 #include "recovery.h"
 #include "markdown.h"
+#include "markdown_export.h"
+#include "docx_zip.h"
+#include "plugin_zip.h"
 #include "menu_commands.h"
 #include "outline_minimap.h"
 #include "output_process.h"
@@ -78,10 +81,11 @@
 #include "tinkeredit.h"
 
 typedef struct AppWindows {
-    HWND edit, preview, tabs, status, outline, minimap, splitEdit, lastEditView;
+    HWND edit, preview, tabs, status, outline, outlineClose, minimap, splitEdit, lastEditView;
     HWND debugStatus, debugVariables;
     HWND debugContinue, debugStepOver, debugStepInto, debugStepOut;
     HWND outputPanel, outputInput;
+    HWND gitPanel, gitTree;
 } AppWindows;
 static AppWindows g_windows;
 #define g_hEdit g_windows.edit
@@ -89,6 +93,7 @@ static AppWindows g_windows;
 #define g_hTabs g_windows.tabs
 #define g_hStatus g_windows.status
 #define g_hOutline g_windows.outline
+#define g_hOutlineClose g_windows.outlineClose
 #define g_hMinimap g_windows.minimap
 #define g_hSplitEdit g_windows.splitEdit
 #define g_lastEditView g_windows.lastEditView
@@ -100,6 +105,8 @@ static AppWindows g_windows;
 #define g_hDebugStepOut g_windows.debugStepOut
 #define g_hOutputPanel g_windows.outputPanel
 #define g_hOutputInput g_windows.outputInput
+#define g_hGitPanel g_windows.gitPanel
+#define g_hGitTree g_windows.gitTree
 HWND g_hMainWnd;
 /* The main window's accelerator table, forwarded into from the preview's
    AcceleratorKeyPressed handler - see AccelKey_Invoke() - since disabling
@@ -168,6 +175,9 @@ WCHAR *g_zigBinOverride = NULL;   /* [Compiler] ZigPath: folder to search for zi
 WCHAR *g_luaBinOverride = NULL;   /* [Compiler] LuaPath: folder to search for a Lua interpreter instead of PATH */
 WCHAR *g_gdbBinOverride = NULL;   /* [Compiler] GdbPath: optional folder overriding bundled/PATH GDB */
 WCHAR *g_compilerExtraFlags = NULL; /* [Compiler] ExtraFlags appended to Run/Debug C/C++ builds; set via Settings > Compiler */
+int g_useExternalDiffTool = 0;      /* [Git] UseExternalDiffTool; set via Settings > Git */
+WCHAR *g_externalDiffToolPath = NULL; /* [Git] DiffToolPath: launched as "<path>" <left> <right> */
+WCHAR *g_externalMergeToolPath = NULL; /* [Git] MergeToolPath: launched as "<path>" <base> <local> <remote> <merged> */
 WCHAR *g_customCssPath = NULL;
 static WCHAR *g_debugLocationPath = NULL;
 static WCHAR *g_debugWorkingDirectory = NULL;
@@ -344,8 +354,13 @@ static int g_draggingSplitEditor = 0;
 static int g_draggingExplorer = 0;
 static RECT g_outputSplitterRect = {0}; /* above the output panel, empty while it is hidden */
 static int g_draggingOutput = 0;
+static RECT g_gitPanelSplitterRect = {0}; /* the Git panel's splitter, empty while the panel is hidden */
+static int g_draggingGitPanel = 0;
+static int g_draggingMergePanel = 0; /* g_mergePanelSplitterRect lives in merge_panel.inc, included before this is used */
 int g_outputPanelVisible = 0;
 int g_outputPanelHeight = -1; /* pixels; -1 until the user drags the splitter */
+int g_outputPanelOnRight = 0; /* docked beside the editor instead of under it */
+int g_outputPanelWidth = -1;  /* pixels, when docked at the side; -1 until dragged */
 int g_runInConsole = 0; /* Run in a separate console window instead of the output panel */
 int g_commandLinePreviewMode = 0;
 RECT g_savedWindowRect;
@@ -366,6 +381,7 @@ int g_indentUseSpaces = 0;
 int g_tabWidth = 4;
 int g_spellCheckEnabled = 1;
 int g_outlineVisible = 0;
+int g_outlineOnLeft = 0;
 int g_minimapVisible = 1;
 static int g_minimapDragging = 0;
 static int g_minimapViewTop = 0; /* client-relative y (minimap coords) of the visible-region box */
@@ -515,6 +531,7 @@ static void show_error(const WCHAR *message) {
 #include "internal/debugger.inc"
 #include "internal/output_panel.inc"
 #include "internal/git_panel.inc"
+#include "internal/merge_panel.inc"
 
 #include "internal/outline_host.inc"
 
@@ -558,6 +575,15 @@ static void create_navigation_controls(HWND hwnd) {
         0, 0, 0, 0, hwnd, (HMENU)ID_OUTLINE, GetModuleHandleW(NULL), NULL);
     theme_list_frame(g_hOutline);
     themed_scrollbar_attach(g_hOutline, THEMED_SCROLL_LISTBOX);
+
+    /* The close button above it. Its id is IDM_VIEW_OUTLINE itself - the
+       View menu's own toggle command - so clicking it reaches
+       toggle_outline() exactly as that menu item does, the same reuse
+       layout_explorer()'s own close button makes of IDM_VIEW_EXPLORER. */
+    g_hOutlineClose = CreateWindowExW(0, L"BUTTON", L"X",
+        WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, hwnd, (HMENU)(UINT_PTR)IDM_VIEW_OUTLINE, GetModuleHandleW(NULL), NULL);
+    SendMessageW(g_hOutlineClose, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
 }
 
 static void create_document_tabs(HWND hwnd, int dpi) {
@@ -663,6 +689,8 @@ static void initialize_main_window(HWND hwnd) {
 
     create_document_tabs(hwnd, dpi);
     create_output_panel(hwnd); /* before the editor views, which apply the font to it */
+    create_git_panel(hwnd);
+    create_merge_panel(hwnd);
     create_editor_views(hwnd);
     initialize_first_document();
     create_preview_control(hwnd);
@@ -672,6 +700,11 @@ static void initialize_main_window(HWND hwnd) {
     update_status_bar();
     update_outline();
     layout(hwnd);
+    /* g_outputTab (restored from settings) already picked which tab's view
+       is visible - creation time keyed every WS_VISIBLE off it - but that
+       alone doesn't revive a Terminal tab's actual shell process, which
+       select_output_tab() would normally start on the way to that tab. */
+    if (g_outputPanelVisible && g_outputTab == OUTPUT_TAB_TERMINAL) start_terminal();
 }
 
 /* Runs the slow, non-essential startup work that would otherwise keep the
@@ -965,6 +998,9 @@ static int handle_owner_draw(LPARAM lParam) {
     const DRAWITEMSTRUCT *item = (const DRAWITEMSTRUCT *)lParam;
     if (item->CtlType == ODT_MENU && item->itemData)
         draw_main_menu_item(item);
+    else if (item->CtlType == ODT_BUTTON &&
+            (item->hwndItem == g_hExplorerClose || item->hwndItem == g_hOutlineClose))
+        draw_debug_panel_button(item); /* the same plain bordered push-button painter the output and Git panels use */
     else if (item->CtlType == ODT_BUTTON)
         draw_toolbar_button(item);
     else if (item->CtlType == ODT_TAB && item->hwndItem == g_hTabs)
@@ -1063,11 +1099,12 @@ static int set_splitter_cursor(HWND hwnd) {
     POINT point;
     GetCursorPos(&point);
     ScreenToClient(hwnd, &point);
-    /* The output panel's splitter runs across the bottom of the others, so
-       it is tested first. */
+    /* The output panel's splitter runs across the bottom of the others (or,
+       when docked at the side, down the side), so it is tested first. */
     if (output_splitter_contains(point.x, point.y))
-        SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_SIZENS));
-    else if (splitter_contains_x(point.x) || explorer_splitter_contains_x(point.x))
+        SetCursor(LoadCursorA(NULL, (LPCSTR)(g_outputPanelOnRight ? IDC_SIZEWE : IDC_SIZENS)));
+    else if (splitter_contains_x(point.x) || explorer_splitter_contains_x(point.x) ||
+             git_panel_splitter_contains_x(point.x) || merge_panel_splitter_contains_x(point.x))
         SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_SIZEWE));
     else if (split_editor_splitter_contains(point.x, point.y))
         SetCursor(LoadCursorA(NULL, (LPCSTR)(g_splitEditorVertical ? IDC_SIZEWE : IDC_SIZENS)));
@@ -1083,6 +1120,10 @@ static void begin_splitter_drag(HWND hwnd, int x, int y) {
         g_dragging = 1;
     else if (explorer_splitter_contains_x(x))
         g_draggingExplorer = 1;
+    else if (git_panel_splitter_contains_x(x))
+        g_draggingGitPanel = 1;
+    else if (merge_panel_splitter_contains_x(x))
+        g_draggingMergePanel = 1;
     else if (split_editor_splitter_contains(x, y))
         g_draggingSplitEditor = 1;
     else
@@ -1099,12 +1140,47 @@ static void update_splitter_drag(HWND hwnd, int x, int y) {
     } else if (g_draggingExplorer && x != g_explorerWidth) {
         g_explorerWidth = x;
         positionChanged = 1;
-    } else if (g_draggingOutput) {
-        /* The panel's bottom edge stays put while its top follows the mouse. */
-        int height = g_outputSplitterRect.bottom + g_outputPanelHeight - y - SPLITTER_WIDTH / 2;
-        if (height != g_outputPanelHeight) {
-            g_outputPanelHeight = height;
+    } else if (g_draggingGitPanel) {
+        int width;
+        if (g_gitPanelOnRight) {
+            /* The panel's right edge stays put while its left edge (the
+               splitter) follows the mouse. */
+            width = g_gitPanelSplitterRect.right + g_gitPanelWidth - x - SPLITTER_WIDTH / 2;
+        } else {
+            /* Its left edge stays put instead - wherever the explorer (if
+               it's also docked left) already left off, not necessarily 0 -
+               while the splitter on its right follows the mouse. */
+            int panelX = g_gitPanelSplitterRect.left - g_gitPanelWidth;
+            width = x - panelX;
+        }
+        if (width != g_gitPanelWidth) {
+            g_gitPanelWidth = width;
             positionChanged = 1;
+        }
+    } else if (g_draggingMergePanel) {
+        /* Always right-docked: the panel's right edge stays put while its
+           left edge (the splitter) follows the mouse, same as the Git
+           panel's own right-docked case above. */
+        int width = g_mergePanelSplitterRect.right + g_mergePanelWidth - x - SPLITTER_WIDTH / 2;
+        if (width != g_mergePanelWidth) {
+            g_mergePanelWidth = width;
+            positionChanged = 1;
+        }
+    } else if (g_draggingOutput) {
+        if (g_outputPanelOnRight) {
+            /* The panel's right edge stays put while its left edge follows. */
+            int width = g_outputSplitterRect.right + g_outputPanelWidth - x - SPLITTER_WIDTH / 2;
+            if (width != g_outputPanelWidth) {
+                g_outputPanelWidth = width;
+                positionChanged = 1;
+            }
+        } else {
+            /* The panel's bottom edge stays put while its top follows the mouse. */
+            int height = g_outputSplitterRect.bottom + g_outputPanelHeight - y - SPLITTER_WIDTH / 2;
+            if (height != g_outputPanelHeight) {
+                g_outputPanelHeight = height;
+                positionChanged = 1;
+            }
         }
     } else if (g_draggingSplitEditor) {
         int position = g_splitEditorVertical ? x - g_splitEditorRegionOrigin.x
@@ -1121,8 +1197,10 @@ static void update_splitter_drag(HWND hwnd, int x, int y) {
 }
 
 static void end_splitter_drag(void) {
-    if (!g_dragging && !g_draggingExplorer && !g_draggingSplitEditor && !g_draggingOutput) return;
-    g_dragging = g_draggingExplorer = g_draggingSplitEditor = g_draggingOutput = 0;
+    if (!g_dragging && !g_draggingExplorer && !g_draggingSplitEditor && !g_draggingOutput &&
+        !g_draggingGitPanel && !g_draggingMergePanel) return;
+    g_dragging = g_draggingExplorer = g_draggingSplitEditor = g_draggingOutput = g_draggingGitPanel =
+        g_draggingMergePanel = 0;
     ReleaseCapture();
     save_layout_settings();
 }
@@ -1324,6 +1402,7 @@ static void load_application_settings(const WCHAR *commandLineFile) {
     load_layout_settings();
     load_find_settings();
     load_compiler_settings();
+    load_git_settings();
     if (commandLineFile &&
         (language_for_path(commandLineFile)->id == LANG_MARKDOWN || image_file_path(commandLineFile))) {
         /* File-association/command-line launches of a Markdown file are

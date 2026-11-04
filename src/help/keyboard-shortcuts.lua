@@ -41,6 +41,8 @@ local OTHER_KEYS = {
   { "Tab / Shift+Tab", "Smart indent / outdent" },
   { "Ctrl+Shift+F6", "Cycle panes backwards" },
   { "Ctrl+Numpad + / Ctrl+Numpad -", "Zoom in / out" },
+  { "Alt+drag", "Column (rectangular/block) selection" },
+  { "Alt+Shift+Arrow keys", "Extend a column selection" },
 }
 
 -- A menu label as shown: "&&" is a literal "&", any other "&" only marks

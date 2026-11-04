@@ -366,6 +366,31 @@ user accepts the Save As dialog.
 ui.save_binary("output.bin", string.char(0, 1, 255), "Export binary")
 ```
 
+### zip
+
+Builds and reads ZIP archives entirely in memory - no path ever touches a real file, so this doesn't relax "plugins can't touch arbitrary files": pack a plugin's own generated files into one archive, hand the bytes to `ui.save_binary`, or unpack bytes a plugin already has (for example, from a future data source) to read what's inside.
+
+#### `zip.pack(entries)`
+
+`entries` is an array of `{ name = "path/in/archive.txt", data = "bytes" }` tables. Returns the archive as a Lua string, or `nil, err` on failure (for example, a bad entry).
+
+#### `zip.unpack(bytes)`
+
+Returns an array of `{ name = ..., data = ... }` tables, one per file in the archive named by `bytes` (a ZIP read from `zip.pack` or elsewhere), or `nil, err` if `bytes` isn't a valid ZIP.
+
+```lua
+local archive = assert(zip.pack({
+  { name = "notes.txt", data = "hello" },
+  { name = "data/values.csv", data = "1,2,3\n" },
+}))
+ui.save_binary("export.zip", archive)
+
+local entries = assert(zip.unpack(archive))
+for _, entry in ipairs(entries) do
+  ui.log(entry.name .. ": " .. #entry.data .. " bytes")
+end
+```
+
 ## Where commands appear
 
 A command's label is a path separated by `/`. Each part before the last names a submenu; the last part is the item. An `&` before a letter marks it as the item's access key (`&&` shows a literal `&`).

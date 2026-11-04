@@ -41,8 +41,13 @@ return {
     { "&Save", "file.save" },
     { "Save &As...", "file.save_as" },
     { "Save A&ll", "file.save_all" },
-    { "Export Rendered &HTML...", "file.export_html" },
-    { "Export Rendered &PDF...", "file.export_pdf" },
+    { "&Export As", {
+      { "Rendered &HTML...", "file.export_html" },
+      { "Rendered &PDF...", "file.export_pdf" },
+      { "&Text...", "file.export_text" },
+      { "&RTF...", "file.export_rtf" },
+      { "&Word (.docx)...", "file.export_docx" },
+    } },
     { "&Print Rendered Preview...", "file.print" },
     { "Open &Terminal Here", "file.open_terminal" },
     { "Show in E&xplorer", "file.show_in_explorer" },
@@ -132,6 +137,7 @@ return {
     { "&Spell Check", "view.spell_check" },
     { "Spell Check &Language...", "view.spell_check_language" },
     { "Document &Outline", "view.outline" },
+    { "Document Outline on &Left", "view.outline_on_left" },
     { "&File Explorer", "view.file_explorer" },
     { "Mini&map", "view.minimap" },
     { "Split Editor &Horizontally", "view.split_editor" },
@@ -140,6 +146,7 @@ return {
     { "&Reset Split Editor", "view.reset_split_editor" },
     { "&Panels", {
       { "Output Pa&nel", "view.output_panel" },
+      { "Output Panel on &Right", "view.output_panel_on_right" },
       { "Te&rminal", "view.terminal" },
       { "&Problems", "view.problems" },
     } },
@@ -168,6 +175,8 @@ return {
 
   { "&Git", {
     { "&Git Panel", "git.panel" },
+    { "Git Panel on &Right", "git.panel_on_right" },
+    { "&Merge Conflicts Panel", "git.merge_panel" },
     { "&Status", "git.status" },
     { "Diff Current &File (Unstaged)", "git.diff_file" },
     { "Diff Current File (S&taged)", "git.diff_file_staged" },
@@ -180,7 +189,8 @@ return {
     { "Stage &All", "git.stage_all" },
     { "&Unstage All", "git.unstage_all" },
     { "&Discard All Changes...", "git.discard_all" },
-    { "&Commit...", "git.commit" },
+    { "&Commit", "git.commit" },
+    { "Commit && &Push", "git.commit_and_push" },
     "-",
     { "&Push", "git.push" },
     { "P&ublish Branch...", "git.publish" },
@@ -209,6 +219,11 @@ return {
       { "&Continue Rebase", "git.rebase_continue" },
       { "&Skip Commit", "git.rebase_skip" },
       { "&Abort Rebase", "git.rebase_abort" },
+    } },
+    { "Ta&g", {
+      { "&New Tag...", "git.tag_new" },
+      { "&Delete Tag...", "git.tag_delete" },
+      { "&Push Tags", "git.tag_push" },
     } },
   } },
 

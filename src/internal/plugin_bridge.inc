@@ -806,6 +806,9 @@ static void load_menus_and_plugins(void) {
     plugin_config_cache_clear();
     plugin_host_set_callbacks(&callbacks);
     plugin_host_shutdown();
+    size_t ziptoolLength = 0;
+    const char *ziptoolSource = builtin_script(IDR_ZIPTOOL_LUA, &ziptoolLength);
+    plugin_host_set_ziptool_source(ziptoolSource, ziptoolLength);
     char *report = load_builtin_formatting(load_menu_definition(load_theme_colours(NULL)));
     WCHAR *bundled = bundled_plugin_directory();
     WCHAR *user = user_plugin_directory();

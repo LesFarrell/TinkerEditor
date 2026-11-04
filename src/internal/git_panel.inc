@@ -21,6 +21,11 @@ static int g_gitRemoteBranchCount;
 static int g_gitRemoteBranchCapacity;
 static WCHAR *g_gitBranchesWorkspace;
 
+/* The Git panel's own header buttons (its window is created further down,
+   in "the Git panel's own window"). */
+static HWND g_hGitRefresh, g_hGitCommit, g_hGitStageAll, g_hGitClose;
+static HWND g_hGitCommitMessage, g_hGitCommitPush;
+
 static void clear_git_branch_cache(void) {
     free_branch_list(g_gitLocalBranches, g_gitLocalBranchCount);
     g_gitLocalBranches = NULL;
@@ -288,28 +293,71 @@ static void git_discard_all(void) {
     refresh_git_status();
 }
 
-static void git_commit_prompt(void) {
+static void show_git_panel(void); /* defined further down, with the rest of the panel's own window */
+
+/* A fresh, uniquely-named path under the temp directory for a commit
+   message file, or NULL. git_commit() deletes it once the commit that reads
+   it finishes - see g_gitCommitTempFile in output_panel.inc's
+   handle_output_chunk() - not right after starting that (still-running)
+   process, the same temp-file pattern debugger.inc's own
+   debug_temporary_path() uses. */
+static WCHAR *git_commit_message_temp_path(void) {
+    WCHAR temporaryDirectory[MAX_PATH];
+    DWORD length = GetTempPathW(MAX_PATH, temporaryDirectory);
+    if (!length || length >= MAX_PATH) return NULL;
+    WCHAR name[96];
+    swprintf(name, sizeof(name) / sizeof(name[0]), L"tinkeredit-commit-%lu-%llu.txt",
+             GetCurrentProcessId(), (unsigned long long)GetTickCount64());
+    return path_join(temporaryDirectory, name);
+}
+
+/* Commits whatever's typed into the panel's own commit message box, as a
+   file (`git commit -F`) rather than `-m "..."` - unlike the old modal
+   prompt this replaced, that handles a multi-line message or one containing
+   a quotation mark without complaint. andPush also pushes once the commit
+   succeeds (see g_gitPushAfterCommit, consumed in output_panel.inc's
+   handle_output_chunk()). The box is cleared once the commit is queued, not
+   once it's known to succeed - simplest, and the message stays visible in
+   the Run tab's own output if it's rejected. */
+static void git_commit(int andPush) {
     if (!g_currentWorkspaceFolder) {
         MessageBoxW(g_hMainWnd, L"Open a workspace folder to commit.", L"Git", MB_OK | MB_ICONINFORMATION);
         return;
     }
-    WCHAR message[512] = L"";
-    if (!show_text_input(L"Commit", L"Commit message:", L"", message, 512) || !message[0]) return;
-    if (wcschr(message, L'"')) {
-        MessageBoxW(g_hMainWnd, L"Commit messages can't contain a quotation mark.",
-                    L"Git", MB_OK | MB_ICONWARNING);
+    if (!g_gitPanelVisible) show_git_panel();
+    Sci_Position length = 0;
+    char *message = get_edit_text(g_hGitCommitMessage, &length);
+    if (!message || !length) {
+        MessageBoxW(g_hMainWnd, L"Enter a commit message first.", L"Git", MB_OK | MB_ICONINFORMATION);
+        free(message);
+        if (g_hGitCommitMessage) SetFocus(g_hGitCommitMessage);
         return;
     }
-    size_t capacity = wcslen(message) + 32;
+    WCHAR *tempFile = git_commit_message_temp_path();
+    if (!tempFile || !write_file_atomic(tempFile, message, (size_t)length, TEXT_ENCODING_UTF8, 0)) {
+        MessageBoxW(g_hMainWnd, L"Could not write the commit message to a temporary file.",
+                    L"Git", MB_OK | MB_ICONWARNING);
+        free(message);
+        free(tempFile);
+        return;
+    }
+    free(message);
+    size_t capacity = wcslen(tempFile) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
-    if (!parameters) return;
-    swprintf(parameters, capacity, L"commit -m \"%ls\"", message);
+    if (!parameters) { DeleteFileW(tempFile); free(tempFile); return; }
+    swprintf(parameters, capacity, L"commit -F \"%ls\"", tempFile);
+    g_gitCommitTempFile = tempFile;
+    g_gitPushAfterCommit = andPush;
+    SendMessageA(g_hGitCommitMessage, SCI_CLEARALL, 0, 0);
     /* Commit hooks and signing can take time or require user attention, so a
        commit belongs on the cancellable Run tab rather than in the modal
        quick-command runner. */
-    run_git_mutating_output(parameters, L"Git Commit");
+    run_git_mutating_output(parameters, andPush ? L"Git Commit & Push" : L"Git Commit");
     free(parameters);
 }
+
+static void git_commit_prompt(void) { git_commit(0); }
+static void git_commit_and_push_prompt(void) { git_commit(1); }
 
 /* push/pull/fetch/merge/rebase/switch/branch run visibly on the Run tab,
    since they can be slow or need the user's attention; this flags the run so
@@ -448,6 +496,71 @@ static void git_stash_drop_prompt(void) {
     free(stash);
 }
 
+static WCHAR *pick_git_tag(const WCHAR *title, const WCHAR *okLabel) {
+    int count = 0;
+    WCHAR **tags = git_list_refs(L"refs/tags", &count);
+    if (!tags || count == 0) {
+        MessageBoxW(g_hMainWnd, L"No tags were found in this repository.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        free_branch_list(tags, count);
+        return NULL;
+    }
+    int chosen = show_choice_dialog(title, L"Choose a tag:", tags, count, okLabel);
+    WCHAR *result = chosen >= 0 ? _wcsdup(tags[chosen]) : NULL;
+    free_branch_list(tags, count);
+    return result;
+}
+
+static void git_new_tag_prompt(void) {
+    if (!g_currentWorkspaceFolder) {
+        MessageBoxW(g_hMainWnd, L"Open a workspace folder to create a tag.",
+                    L"Git", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    WCHAR name[128] = L"";
+    if (!show_text_input(L"New Tag", L"Tag name:", L"", name, 128) || !name[0]) return;
+    if (reject_quoted_git_name(name)) return;
+    WCHAR message[256] = L"";
+    if (!show_text_input(L"New Tag", L"Tag message (optional - makes it an annotated tag):",
+                         L"", message, 256))
+        return;
+    if (wcschr(message, L'"')) {
+        MessageBoxW(g_hMainWnd, L"Tag messages can't contain a quotation mark.",
+                    L"Git", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    size_t capacity = wcslen(name) + wcslen(message) + 48;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (parameters) {
+        if (message[0]) swprintf(parameters, capacity, L"tag -a \"%ls\" -m \"%ls\"", name, message);
+        else swprintf(parameters, capacity, L"tag \"%ls\"", name);
+        run_git_mutating_output(parameters, L"Git New Tag");
+        free(parameters);
+    }
+}
+
+static void git_delete_tag_prompt(void) {
+    WCHAR *tag = pick_git_tag(L"Delete Tag", L"Delete");
+    if (!tag) return;
+    if (reject_quoted_git_name(tag)) { free(tag); return; }
+    WCHAR prompt[160];
+    swprintf(prompt, 160, L"Permanently delete tag %ls?", tag);
+    if (MessageBoxW(g_hMainWnd, prompt, L"Git", MB_YESNO | MB_ICONWARNING) == IDYES) {
+        size_t capacity = wcslen(tag) + 32;
+        WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+        if (parameters) {
+            swprintf(parameters, capacity, L"tag -d \"%ls\"", tag);
+            run_git_mutating_output(parameters, L"Git Delete Tag");
+            free(parameters);
+        }
+    }
+    free(tag);
+}
+
+static void git_push_tags(void) {
+    run_git_mutating_output(L"push --tags", L"Git Push Tags");
+}
+
 static void git_switch_to_branch(const WCHAR *branch, int remote) {
     if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 40;
@@ -537,10 +650,8 @@ static void git_delete_branch_prompt(void) {
     free(branch);
 }
 
-static void git_merge_prompt(void) {
-    WCHAR *branch = pick_git_branch(L"Merge Into Current Branch", L"Merge branch:", L"Merge", 1);
-    if (!branch) return;
-    if (reject_quoted_git_name(branch)) { free(branch); return; }
+static void git_merge_branch_into_current(const WCHAR *branch) {
+    if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -548,13 +659,17 @@ static void git_merge_prompt(void) {
         run_git_mutating_output(parameters, L"Git Merge");
         free(parameters);
     }
+}
+
+static void git_merge_prompt(void) {
+    WCHAR *branch = pick_git_branch(L"Merge Into Current Branch", L"Merge branch:", L"Merge", 1);
+    if (!branch) return;
+    git_merge_branch_into_current(branch);
     free(branch);
 }
 
-static void git_rebase_prompt(void) {
-    WCHAR *branch = pick_git_branch(L"Rebase Onto Branch", L"Rebase onto:", L"Rebase", 1);
-    if (!branch) return;
-    if (reject_quoted_git_name(branch)) { free(branch); return; }
+static void git_rebase_onto_branch(const WCHAR *branch) {
+    if (reject_quoted_git_name(branch)) return;
     size_t capacity = wcslen(branch) + 32;
     WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
     if (parameters) {
@@ -562,7 +677,24 @@ static void git_rebase_prompt(void) {
         run_git_mutating_output(parameters, L"Git Rebase");
         free(parameters);
     }
+}
+
+static void git_rebase_prompt(void) {
+    WCHAR *branch = pick_git_branch(L"Rebase Onto Branch", L"Rebase onto:", L"Rebase", 1);
+    if (!branch) return;
+    git_rebase_onto_branch(branch);
     free(branch);
+}
+
+static void git_cherry_pick_commit(const WCHAR *hash) {
+    if (reject_quoted_git_name(hash)) return;
+    size_t capacity = wcslen(hash) + 32;
+    WCHAR *parameters = (WCHAR *)malloc(capacity * sizeof(WCHAR));
+    if (parameters) {
+        swprintf(parameters, capacity, L"cherry-pick \"%ls\"", hash);
+        run_git_mutating_output(parameters, L"Git Cherry-pick");
+        free(parameters);
+    }
 }
 
 static void git_merge_continue(void) {
@@ -591,17 +723,16 @@ static void git_rebase_abort(void) {
         run_git_mutating_output(L"rebase --abort", L"Git Abort Rebase");
 }
 
-static void show_git_panel(void) {
-    refresh_git_status();
-    render_git_panel();
-    show_output_panel(OUTPUT_TAB_GIT, 0);
-    SetFocus(g_outputPanes[OUTPUT_TAB_GIT].view);
-}
+/* show_git_panel()/hide_git_panel()/toggle_git_panel() are defined further
+   down, alongside the rest of the panel's own window (create_git_panel()
+   and friends). */
+static void show_git_panel(void);
 
 /* The status bar's Git segment (see StatusSubclassProc) reaches every branch
    command through this one compact menu. */
 enum { GIT_MENU_PANEL = 1, GIT_MENU_SWITCH, GIT_MENU_NEW, GIT_MENU_DELETE,
-      GIT_MENU_MERGE, GIT_MENU_REBASE, GIT_MENU_PUSH, GIT_MENU_PULL, GIT_MENU_FETCH };
+      GIT_MENU_MERGE, GIT_MENU_REBASE, GIT_MENU_PUSH, GIT_MENU_PULL, GIT_MENU_FETCH,
+      GIT_MENU_TAG_NEW, GIT_MENU_TAG_DELETE, GIT_MENU_TAG_PUSH };
 
 static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
     HMENU menu = CreatePopupMenu();
@@ -618,6 +749,10 @@ static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
     AppendMenuW(menu, MF_STRING, GIT_MENU_PUSH, L"Push");
     AppendMenuW(menu, MF_STRING, GIT_MENU_PULL, L"Pull");
     AppendMenuW(menu, MF_STRING, GIT_MENU_FETCH, L"Fetch");
+    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_NEW, L"New Tag...");
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_DELETE, L"Delete Tag...");
+    AppendMenuW(menu, MF_STRING, GIT_MENU_TAG_PUSH, L"Push Tags");
     UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
                                   screenPoint.x, screenPoint.y, 0, hwnd, NULL);
     DestroyMenu(menu);
@@ -631,6 +766,9 @@ static void show_git_branch_menu(HWND hwnd, POINT screenPoint) {
         case GIT_MENU_PUSH: git_push(); break;
         case GIT_MENU_PULL: git_pull(); break;
         case GIT_MENU_FETCH: git_fetch(); break;
+        case GIT_MENU_TAG_NEW: git_new_tag_prompt(); break;
+        case GIT_MENU_TAG_DELETE: git_delete_tag_prompt(); break;
+        case GIT_MENU_TAG_PUSH: git_push_tags(); break;
     }
 }
 
@@ -752,7 +890,7 @@ static WCHAR *git_file_label(const WCHAR *path, WCHAR mark) {
    never a subprocess - so it's always safe to call directly, including from
    a checkbox click (see handle_git_tree_item_changed()). */
 static void render_git_panel(void) {
-    HWND tree = g_outputPanes[OUTPUT_TAB_GIT].view;
+    HWND tree = g_hGitTree;
     if (!tree) return;
     g_buildingGitTree = 1;
     SendMessageW(tree, WM_SETREDRAW, FALSE, 0);
@@ -915,7 +1053,7 @@ static HTREEITEM git_tree_item_at_message_pos(HWND tree, POINT *screenOut, UINT 
    the top of the message loop. */
 static WCHAR *g_gitPendingActionPath;
 static WCHAR g_gitPendingActionMark;
-static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff, 10 log, 11 blame */
+static int g_gitPendingAction; /* 0 none, 1 stage, 2 unstage, 3 diff, 4 switch local, 5 discard, 6 delete, 7 staged diff, 8 switch remote, 9 untracked diff, 10 log, 11 blame, 12 resolve in merge tool, 13 rebase onto, 14 merge branch into current */
 
 static void queue_git_panel_action(int action, const WCHAR *path, WCHAR mark) {
     WCHAR *copy = _wcsdup(path);
@@ -945,6 +1083,9 @@ static void run_pending_git_panel_action(void) {
         case 9: git_diff_panel_file(path, GIT_DIFF_UNTRACKED); break;
         case 10: git_log_panel_file(path); break;
         case 11: git_blame_panel_file(path); break;
+        case 12: git_resolve_conflict_in_merge_tool(path); break;
+        case 13: git_rebase_onto_branch(path); break;
+        case 14: git_merge_branch_into_current(path); break;
         default: git_stage_file(path); break; /* also how a conflict's resolution is marked */
     }
     free(path);
@@ -975,7 +1116,7 @@ static void handle_git_tree_item_changed(NMTVITEMCHANGE *change) {
     int newChecked = ((change->uStateNew & TVIS_STATEIMAGEMASK) >> 12) == 2;
     int oldChecked = ((change->uStateOld & TVIS_STATEIMAGEMASK) >> 12) == 2;
     if (newChecked == oldChecked) return;
-    GitTreeNode *node = git_tree_item_data(g_outputPanes[OUTPUT_TAB_GIT].view, change->hItem);
+    GitTreeNode *node = git_tree_item_data(g_hGitTree, change->hItem);
     if (!node) return;
     if (node->kind == GIT_TREE_STAGED_FILE && !newChecked) queue_git_panel_action(2, node->path, 0);
     else if ((node->kind == GIT_TREE_UNSTAGED_FILE || node->kind == GIT_TREE_CONFLICT_FILE) && newChecked)
@@ -983,7 +1124,7 @@ static void handle_git_tree_item_changed(NMTVITEMCHANGE *change) {
 }
 
 enum { GIT_CTX_STAGE = 1, GIT_CTX_UNSTAGE, GIT_CTX_DISCARD, GIT_CTX_DIFF, GIT_CTX_SWITCH, GIT_CTX_DELETE_BRANCH,
-       GIT_CTX_LOG, GIT_CTX_BLAME };
+       GIT_CTX_LOG, GIT_CTX_BLAME, GIT_CTX_MERGE, GIT_CTX_REBASE, GIT_CTX_MERGE_BRANCH };
 
 static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPoint) {
     if (!item) return;
@@ -1001,9 +1142,13 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
     if (!menu) { free(path); return; }
     if (kind == GIT_TREE_REMOTE_BRANCH) {
         AppendMenuW(menu, MF_STRING, GIT_CTX_SWITCH, L"Switch to This Branch");
+        AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE_BRANCH, L"Merge This Branch into Current");
+        AppendMenuW(menu, MF_STRING, GIT_CTX_REBASE, L"Rebase Current Branch onto This");
     } else if (kind == GIT_TREE_LOCAL_BRANCH) {
         if (mark != L'*') {
             AppendMenuW(menu, MF_STRING, GIT_CTX_SWITCH, L"Switch to This Branch");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE_BRANCH, L"Merge This Branch into Current");
+            AppendMenuW(menu, MF_STRING, GIT_CTX_REBASE, L"Rebase Current Branch onto This");
             AppendMenuW(menu, MF_STRING, GIT_CTX_DELETE_BRANCH, L"Delete Branch...");
         }
     } else if (kind == GIT_TREE_STAGED_FILE) {
@@ -1020,6 +1165,8 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
         AppendMenuW(menu, MF_STRING, GIT_CTX_DISCARD, L"Discard Changes...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, GIT_CTX_DIFF, L"Open Diff");
+        if (kind == GIT_TREE_CONFLICT_FILE && g_externalMergeToolPath && g_externalMergeToolPath[0])
+            AppendMenuW(menu, MF_STRING, GIT_CTX_MERGE, L"Resolve in Merge Tool");
         if (mark != L'?') {
             AppendMenuW(menu, MF_STRING, GIT_CTX_LOG, L"Show File History");
             AppendMenuW(menu, MF_STRING, GIT_CTX_BLAME, L"Blame File");
@@ -1044,6 +1191,9 @@ static void show_git_tree_context_menu(HWND tree, HTREEITEM item, POINT screenPo
         case GIT_CTX_DELETE_BRANCH: queue_git_panel_action(6, path, 0); break;
         case GIT_CTX_LOG: queue_git_panel_action(10, path, 0); break;
         case GIT_CTX_BLAME: queue_git_panel_action(11, path, 0); break;
+        case GIT_CTX_MERGE: queue_git_panel_action(12, path, 0); break;
+        case GIT_CTX_REBASE: queue_git_panel_action(13, path, 0); break;
+        case GIT_CTX_MERGE_BRANCH: queue_git_panel_action(14, path, 0); break;
     }
     free(path);
 }
@@ -1107,4 +1257,290 @@ static LRESULT git_tree_customdraw(NMTVCUSTOMDRAW *draw) {
         default:
             return CDRF_DODEFAULT;
     }
+}
+
+/* ---- the Git panel's own window ----
+   Unlike the other output tabs, Git has its own independently-dockable
+   panel (View > Git Panel / View > Git Panel on Right), the same shape as
+   the file explorer: a small header of buttons above the tree, sized and
+   positioned by layout_git_panel() below rather than as one more tab inside
+   output_panel.inc's shared host. */
+
+/* header: the Close button's row, above the message box. commitRow: the
+   Commit/Commit & Push row, below the message box. footer: the
+   Refresh/Stage All row, at the bottom. message and tree are the two
+   bordered content rects paint_git_panel() frames. */
+typedef struct GitPanelLayout {
+    int pad, header, row;
+    RECT message, commitRow, tree, footer;
+} GitPanelLayout;
+
+static GitPanelLayout git_panel_layout(HWND panel) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    int dpi = GetDpiForWindow(panel);
+    GitPanelLayout layout;
+    layout.pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
+    layout.header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
+    layout.row = layout.header - layout.pad;
+    int messageHeight = MulDiv(GIT_COMMIT_MESSAGE_HEIGHT, dpi, 96);
+    layout.message = (RECT){ layout.pad, layout.header, rc.right - layout.pad,
+                             layout.header + messageHeight };
+    int commitTop = layout.message.bottom + layout.pad;
+    layout.commitRow = (RECT){ layout.pad, commitTop, rc.right - layout.pad, commitTop + layout.row };
+    int footerTop = rc.bottom - layout.pad - layout.row;
+    layout.footer = (RECT){ layout.pad, footerTop, rc.right - layout.pad, footerTop + layout.row };
+    layout.tree = (RECT){ layout.pad, layout.commitRow.bottom + layout.pad,
+                          rc.right - layout.pad, footerTop - layout.pad };
+    if (layout.tree.right < layout.tree.left) layout.tree.right = layout.tree.left;
+    if (layout.tree.bottom < layout.tree.top) layout.tree.bottom = layout.tree.top;
+    return layout;
+}
+
+static void size_git_panel(HWND panel) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    int dpi = GetDpiForWindow(panel);
+    GitPanelLayout layout = git_panel_layout(panel);
+    int closeWidth = MulDiv(DEBUG_CLOSE_BUTTON_WIDTH, dpi, 96);
+    MoveWindow(g_hGitClose, rc.right - layout.pad - closeWidth, layout.pad / 2,
+              closeWidth, layout.row, TRUE);
+    InvalidateRect(g_hGitClose, NULL, TRUE);
+    MoveWindow(g_hGitCommitMessage, layout.message.left + 1, layout.message.top + 1,
+              layout.message.right - layout.message.left - 2,
+              layout.message.bottom - layout.message.top - 2, TRUE);
+    int commitWidth = (layout.commitRow.right - layout.commitRow.left - layout.pad) / 2;
+    if (commitWidth < 0) commitWidth = 0;
+    MoveWindow(g_hGitCommit, layout.commitRow.left, layout.commitRow.top, commitWidth, layout.row, TRUE);
+    MoveWindow(g_hGitCommitPush, layout.commitRow.left + commitWidth + layout.pad, layout.commitRow.top,
+              layout.commitRow.right - (layout.commitRow.left + commitWidth + layout.pad), layout.row, TRUE);
+    InvalidateRect(g_hGitCommit, NULL, TRUE);
+    InvalidateRect(g_hGitCommitPush, NULL, TRUE);
+    MoveWindow(g_hGitTree, layout.tree.left + 1, layout.tree.top + 1,
+              layout.tree.right - layout.tree.left - 2, layout.tree.bottom - layout.tree.top - 2, TRUE);
+    int footerWidth = (layout.footer.right - layout.footer.left - layout.pad) / 2;
+    if (footerWidth < 0) footerWidth = 0;
+    MoveWindow(g_hGitRefresh, layout.footer.left, layout.footer.top, footerWidth, layout.row, TRUE);
+    MoveWindow(g_hGitStageAll, layout.footer.left + footerWidth + layout.pad, layout.footer.top,
+              layout.footer.right - (layout.footer.left + footerWidth + layout.pad), layout.row, TRUE);
+    InvalidateRect(g_hGitRefresh, NULL, TRUE);
+    InvalidateRect(g_hGitStageAll, NULL, TRUE);
+}
+
+static void apply_git_panel_font(const char *faceUtf8) {
+    if (!g_hGitCommitMessage) return;
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETFONT, STYLE_DEFAULT, (LPARAM)faceUtf8);
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETSIZE, STYLE_DEFAULT, g_fontPointSize);
+    SendMessageA(g_hGitCommitMessage, SCI_STYLESETWEIGHT, STYLE_DEFAULT, g_fontWeight);
+    apply_output_view_theme(g_hGitCommitMessage); /* its STYLECLEARALL spreads the font */
+}
+
+static void apply_git_panel_theme(void) {
+    if (!g_hGitTree) return;
+    apply_explorer_theme(g_hGitTree);
+    TreeView_SetBkColor(g_hGitTree, theme_bg_color());
+    TreeView_SetTextColor(g_hGitTree, theme_fg_color());
+    themed_scrollbar_refresh(g_hGitTree);
+    InvalidateRect(g_hGitTree, NULL, TRUE);
+    if (g_hGitPanel) InvalidateRect(g_hGitPanel, NULL, TRUE);
+    apply_output_view_theme(g_hGitCommitMessage);
+    HWND buttons[] = { g_hGitRefresh, g_hGitStageAll, g_hGitCommit, g_hGitCommitPush, g_hGitClose };
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+        if (buttons[i]) InvalidateRect(buttons[i], NULL, TRUE);
+}
+
+static void paint_git_panel(HWND panel, HDC hdc) {
+    RECT rc;
+    GetClientRect(panel, &rc);
+    fill_rect_color(hdc, &rc, theme_bg_color());
+    GitPanelLayout layout = git_panel_layout(panel);
+    frame_rect(hdc, &layout.message, theme_border_color());
+    frame_rect(hdc, &layout.tree, theme_border_color());
+}
+
+static void hide_git_panel(void);
+
+static LRESULT CALLBACK GitPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                             LPARAM lParam, UINT_PTR id, DWORD_PTR data) {
+    (void)id; (void)data;
+    switch (msg) {
+        case WM_SIZE:
+            size_git_panel(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_CTLCOLORBTN:
+            if (g_mainBkBrush) return (LRESULT)g_mainBkBrush;
+            break;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            paint_git_panel(hwnd, hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_PRINTCLIENT:
+            paint_git_panel(hwnd, (HDC)wParam);
+            return 0;
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case ID_GIT_REFRESH: refresh_git_status(); return 0;
+                case ID_GIT_STAGE_ALL: git_stage_all(); return 0;
+                case ID_GIT_COMMIT: git_commit_prompt(); return 0;
+                case ID_GIT_COMMIT_PUSH: git_commit_and_push_prompt(); return 0;
+                case ID_GIT_CLOSE: hide_git_panel(); return 0;
+            }
+            break;
+        case WM_NOTIFY: {
+            NMHDR *notification = (NMHDR *)lParam;
+            if (notification->hwndFrom != g_hGitTree) break;
+            if (notification->code == NM_CUSTOMDRAW)
+                return git_tree_customdraw((NMTVCUSTOMDRAW *)lParam);
+            if (notification->code == TVN_DELETEITEMW)
+                handle_git_tree_delete_item((NMTREEVIEWW *)lParam);
+            else if (notification->code == TVN_ITEMCHANGEDW)
+                handle_git_tree_item_changed((NMTVITEMCHANGE *)lParam);
+            else if (notification->code == NM_DBLCLK)
+                handle_git_tree_double_click(g_hGitTree);
+            else if (notification->code == NM_RCLICK)
+                handle_git_tree_mouse_context_menu(g_hGitTree);
+            return 0;
+        }
+        case WM_DRAWITEM: {
+            const DRAWITEMSTRUCT *dis = (const DRAWITEMSTRUCT *)lParam;
+            if (dis->CtlType == ODT_BUTTON) { draw_debug_panel_button(dis); return TRUE; }
+            break;
+        }
+        case WM_CTLCOLORSTATIC:
+            if (g_mainBkBrush) {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, theme_fg_color());
+                SetBkMode(hdc, TRANSPARENT);
+                return (LRESULT)g_mainBkBrush;
+            }
+            break;
+        case WM_NCDESTROY:
+            RemoveWindowSubclass(hwnd, GitPanelSubclassProc, 1);
+            break;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static void create_git_panel(HWND hwnd) {
+    g_hGitPanel = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_CLIPCHILDREN,
+                                  0, 0, 0, 0, hwnd, (HMENU)(UINT_PTR)ID_GIT_PANEL,
+                                  GetModuleHandleW(NULL), NULL);
+    SetWindowSubclass(g_hGitPanel, GitPanelSubclassProc, 1, 0);
+    /* No WS_VISIBLE here, same as the file explorer's own tree: whether it's
+       actually shown follows the panel's own visibility, reasserted every
+       layout_git_panel() call below rather than fixed at creation time. */
+    g_hGitTree = CreateWindowExW(0, WC_TREEVIEWW, L"",
+        WS_CHILD | WS_VSCROLL | WS_TABSTOP |
+            TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS |
+            TVS_DISABLEDRAGDROP | TVS_CHECKBOXES,
+        0, 0, 0, 0, g_hGitPanel, (HMENU)(UINT_PTR)ID_GIT_TREE, GetModuleHandleW(NULL), NULL);
+    TreeView_SetExtendedStyle(g_hGitTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
+    TreeView_SetItemHeight(g_hGitTree, MulDiv(18, GetDpiForWindow(hwnd), 96));
+    SetWindowSubclass(g_hGitTree, GitTreeSubclassProc, 1, 0);
+    themed_scrollbar_attach(g_hGitTree, THEMED_SCROLL_TREEVIEW);
+    g_hGitRefresh = create_output_button(g_hGitPanel, L"Refresh", ID_GIT_REFRESH);
+    g_hGitStageAll = create_output_button(g_hGitPanel, L"Stage All", ID_GIT_STAGE_ALL);
+    g_hGitClose = create_output_button(g_hGitPanel, L"X", ID_GIT_CLOSE);
+    /* The commit message box: a plain multi-line Scintilla, the same way
+       the output panel's own input line is one, but wrapped (a commit
+       message is prose, not a single command) and with its own scrollbar
+       since a long message can run past the box's fixed height. */
+    g_hGitCommitMessage = create_output_scintilla(g_hGitPanel, ID_GIT_COMMIT_MESSAGE, 1);
+    SendMessageA(g_hGitCommitMessage, SCI_SETWRAPMODE, SC_WRAP_WORD, 0);
+    SendMessageA(g_hGitCommitMessage, SCI_SETHSCROLLBAR, FALSE, 0);
+    themed_scrollbar_attach(g_hGitCommitMessage, THEMED_SCROLL_SCINTILLA);
+    g_hGitCommit = create_output_button(g_hGitPanel, L"Commit", ID_GIT_COMMIT);
+    /* A literal "&", not the usual menu-style "&&" escape: this button's
+       caption is drawn with DT_NOPREFIX (see draw_debug_panel_button()), so
+       nothing un-escapes an "&&" here the way a real menu item would. */
+    g_hGitCommitPush = create_output_button(g_hGitPanel, L"Commit & Push", ID_GIT_COMMIT_PUSH);
+    ShowWindow(g_hGitPanel, g_gitPanelVisible ? SW_SHOW : SW_HIDE);
+    /* Applied here, not left to apply_output_panel_theme()'s/
+       apply_editor_font()'s own calls into apply_git_panel_theme()/
+       apply_git_panel_font(): those run from create_output_panel() and
+       tinkeredit.c's startup sequence, both before create_git_panel() (and
+       before g_hEdit exists, so apply_editor_font() can't just be called
+       early either), so the panel would start in the system's default
+       colours and font until the next theme change or font edit. Mirrors
+       explorer_init()'s own explorer_apply_theme() call in file_explorer.c
+       for the same reason. */
+    apply_git_panel_theme();
+    char *faceUtf8 = to_utf8(g_fontFaceName);
+    if (!faceUtf8) faceUtf8 = _strdup("Consolas");
+    if (faceUtf8) {
+        apply_git_panel_font(faceUtf8);
+        free(faceUtf8);
+    }
+}
+
+/* The Git panel docks at the left or right edge, exactly like the file
+   explorer (see layout_explorer() in ui_shell.inc), carved out of whatever
+   area{} is left once the explorer has taken its own slice. */
+static void layout_git_panel(HWND hwnd, LayoutArea *area) {
+    if (!g_hGitPanel || !g_gitPanelVisible || g_focusMode) {
+        g_gitPanelSplitterRect = (RECT){0, 0, 0, 0};
+        if (g_hGitPanel) ShowWindow(g_hGitPanel, SW_HIDE);
+        return;
+    }
+    int dpi = GetDpiForWindow(hwnd);
+    if (g_gitPanelWidth < 0)
+        g_gitPanelWidth = MulDiv(GIT_PANEL_WIDTH, dpi, 96);
+    int minWidth = MulDiv(GIT_PANEL_MIN_WIDTH, dpi, 96);
+    int maxWidth = area->width * 2 / 3;
+    if (g_gitPanelWidth < minWidth) g_gitPanelWidth = minWidth;
+    if (maxWidth > minWidth && g_gitPanelWidth > maxWidth) g_gitPanelWidth = maxWidth;
+    if (g_gitPanelOnRight) {
+        int panelX = area->x + area->width - g_gitPanelWidth;
+        g_gitPanelSplitterRect = (RECT){ panelX - SPLITTER_WIDTH, area->y,
+                                        panelX, area->y + area->height };
+        MoveWindow(g_hGitPanel, panelX, area->y, g_gitPanelWidth, area->height, TRUE);
+        area->width -= g_gitPanelWidth + SPLITTER_WIDTH;
+    } else {
+        g_gitPanelSplitterRect = (RECT){ area->x + g_gitPanelWidth, area->y,
+                                        area->x + g_gitPanelWidth + SPLITTER_WIDTH, area->y + area->height };
+        MoveWindow(g_hGitPanel, area->x, area->y, g_gitPanelWidth, area->height, TRUE);
+        area->x += g_gitPanelWidth + SPLITTER_WIDTH;
+        area->width -= g_gitPanelWidth + SPLITTER_WIDTH;
+    }
+    if (area->width < 0) area->width = 0;
+    ShowWindow(g_hGitPanel, SW_SHOW);
+    if (g_hGitTree) ShowWindow(g_hGitTree, SW_SHOW);
+}
+
+static int git_panel_splitter_contains_x(int x) {
+    return g_gitPanelVisible && !g_focusMode &&
+           x >= g_gitPanelSplitterRect.left && x <= g_gitPanelSplitterRect.right;
+}
+
+static void hide_git_panel(void) {
+    if (!g_gitPanelVisible) return;
+    g_gitPanelVisible = 0;
+    relayout_and_save(g_hMainWnd);
+}
+
+/* View > Git Panel (Ctrl+Shift+G), and the status bar's "Open Git Panel". */
+static void show_git_panel(void) {
+    refresh_git_status();
+    render_git_panel();
+    if (!g_gitPanelVisible) {
+        g_gitPanelVisible = 1;
+        relayout_and_save(g_hMainWnd);
+    }
+    if (g_hGitTree) SetFocus(g_hGitTree);
+}
+
+static void toggle_git_panel(void) {
+    if (g_gitPanelVisible) hide_git_panel();
+    else show_git_panel();
+}
+
+static void toggle_git_panel_side(HWND hwnd) {
+    g_gitPanelOnRight = !g_gitPanelOnRight;
+    relayout_and_save(hwnd);
 }

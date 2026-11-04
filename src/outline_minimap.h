@@ -71,6 +71,8 @@ void update_outline(void);
 
 /* Flips the outline pane's visibility and relayouts. */
 void toggle_outline(HWND hwnd);
+/* View > Document Outline on Left: flips which edge the panel docks at. */
+void toggle_outline_side(HWND hwnd);
 
 /* One-time, document-independent setup for the minimap's Scintilla view. */
 void configure_minimap(HWND hMinimap);

@@ -82,5 +82,10 @@ void explorer_handle_change_message(void);
    existing users keep seeing them through this header. */
 
 extern HWND g_hExplorerTree;
+/* The close button above the tree (see explorer_init() in file_explorer.c).
+   tinkeredit.c owner-draws it (handle_owner_draw()) and positions it
+   (layout_explorer() in ui_shell.inc); clicking it sends WM_COMMAND
+   IDM_VIEW_EXPLORER, the same as the View menu's toggle. */
+extern HWND g_hExplorerClose;
 
 #endif

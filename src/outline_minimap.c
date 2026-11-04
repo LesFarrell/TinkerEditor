@@ -159,6 +159,11 @@ void toggle_outline(HWND hwnd) {
     g_host->relayoutAndSave(hwnd);
 }
 
+void toggle_outline_side(HWND hwnd) {
+    g_outlineOnLeft = !g_outlineOnLeft;
+    g_host->relayoutAndSave(hwnd);
+}
+
 /* One-time, document-independent setup for the minimap's Scintilla view:
    read-only, no margins or scrollbars of its own, unwrapped so each document
    line maps to exactly one minimap line, and no visible caret. Font, theme,

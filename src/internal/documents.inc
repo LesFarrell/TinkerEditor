@@ -1789,6 +1789,129 @@ static void do_export_html(void) {
     free(script); free(baseUtf8); free(titleUtf8); free(baseEscaped); free(titleEscaped);
 }
 
+/* File > Export as Text.../RTF...: renders the active document's Markdown
+   source directly (markdown_export.c), unlike Export Rendered HTML/PDF above,
+   which goes through the live preview's webview. No preview is required. */
+static void do_export_as(const WCHAR *extension, const WCHAR *filterName, char *(*render)(const char *)) {
+    DWORD cap = LONG_PATH_CAPACITY;
+    WCHAR *path = (WCHAR *)calloc(cap, sizeof(WCHAR));
+    if (!path) return;
+    if (g_currentFile) {
+        wcsncpy(path, g_currentFile, cap - 1);
+        PathRenameExtensionW(path, extension);
+    } else {
+        swprintf(path, cap, L"Untitled%ls", extension);
+    }
+
+    /* OPENFILENAMEW wants a double-NUL-terminated list of NUL-separated
+       strings; each swprintf below stops at the NUL it writes, so the next
+       segment is written just past it, same shape as the literal filter
+       strings used elsewhere (e.g. do_export_html's L"HTML Files...\0..."). */
+    WCHAR filter[160];
+    int filterPos = swprintf(filter, 160, L"%ls Files (*%ls)", filterName, extension) + 1;
+    filterPos += swprintf(filter + filterPos, 160 - filterPos, L"*%ls", extension) + 1;
+    filterPos += swprintf(filter + filterPos, 160 - filterPos, L"All Files (*.*)") + 1;
+    filterPos += swprintf(filter + filterPos, 160 - filterPos, L"*.*") + 1;
+    filter[filterPos] = L'\0';
+
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMainWnd;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = cap;
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    ofn.lpstrDefExt = extension + 1;
+    if (!GetSaveFileNameW(&ofn)) { free(path); return; }
+
+    Sci_Position length = 0;
+    char *text = get_document_text(g_documentStore.active, &length);
+    char *rendered = render(text ? text : "");
+    free(text);
+    if (!rendered) { free(path); show_error(L"Could not render the document for export."); return; }
+
+    WCHAR *ioPath = extended_path(path);
+    int ok = write_bytes_file(ioPath ? ioPath : path, rendered, strlen(rendered));
+    free(ioPath);
+    free(rendered);
+    free(path);
+    if (!ok) show_error(L"Could not write the export file.");
+}
+
+static void do_export_text(void) { do_export_as(L".txt", L"Text", markdown_to_plaintext); }
+static void do_export_rtf(void) { do_export_as(L".rtf", L"Rich Text", markdown_to_rtf); }
+
+static const char *builtin_script(int id, size_t *length); /* plugin_bridge.inc */
+
+/* File > Export as Word (.docx): unlike do_export_as() above, a .docx is a
+   ZIP of XML parts, not one text buffer, so this builds those parts
+   (markdown_export.c) and hands them to docx_zip_build() (src/docx_zip.c),
+   which runs src/lua/ziptool.lua in its own dedicated Lua state to do the
+   actual ZIP packaging - see that file's header comment for why. */
+static void do_export_docx(void) {
+    DWORD cap = LONG_PATH_CAPACITY;
+    WCHAR *path = (WCHAR *)calloc(cap, sizeof(WCHAR));
+    if (!path) return;
+    if (g_currentFile) {
+        wcsncpy(path, g_currentFile, cap - 1);
+        PathRenameExtensionW(path, L".docx");
+    } else {
+        wcsncpy(path, L"Untitled.docx", cap - 1);
+    }
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMainWnd;
+    ofn.lpstrFilter = L"Word Documents (*.docx)\0*.docx\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = cap;
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    ofn.lpstrDefExt = L"docx";
+    if (!GetSaveFileNameW(&ofn)) { free(path); return; }
+
+    Sci_Position length = 0;
+    char *text = get_document_text(g_documentStore.active, &length);
+    char *documentXml = markdown_to_docx_document_xml(text ? text : "");
+    free(text);
+    if (!documentXml) { free(path); show_error(L"Could not render the document for export."); return; }
+
+    size_t fixedCount = 0;
+    const DocxFixedPart *fixedParts = docx_export_fixed_parts(&fixedCount);
+    DocxZipPart *parts = (DocxZipPart *)malloc((fixedCount + 1) * sizeof(DocxZipPart));
+    if (!parts) { free(documentXml); free(path); return; }
+    for (size_t i = 0; i < fixedCount; i++)
+        parts[i] = (DocxZipPart){ fixedParts[i].name, fixedParts[i].content, strlen(fixedParts[i].content) };
+    parts[fixedCount] = (DocxZipPart){ "word/document.xml", documentXml, strlen(documentXml) };
+
+    size_t ziptoolLength = 0;
+    const char *ziptoolSource = builtin_script(IDR_ZIPTOOL_LUA, &ziptoolLength);
+    char *zipBytes = NULL;
+    size_t zipLength = 0;
+    char *error = ziptoolSource
+        ? docx_zip_build(ziptoolSource, ziptoolLength, parts, fixedCount + 1, &zipBytes, &zipLength)
+        : _strdup("The .docx packaging script is missing from tinkeredit.exe.");
+    free(parts);
+    free(documentXml);
+
+    if (!error) {
+        WCHAR *ioPath = extended_path(path);
+        int ok = write_bytes_file(ioPath ? ioPath : path, zipBytes, zipLength);
+        free(ioPath);
+        free(zipBytes);
+        if (!ok) show_error(L"Could not write the export file.");
+    } else {
+        size_t messageCapacity = strlen(error) + 64;
+        char *combined = (char *)malloc(messageCapacity);
+        if (combined) {
+            snprintf(combined, messageCapacity, "Could not build the .docx file: %s", error);
+            WCHAR *wide = to_wide(combined);
+            if (wide) { show_error(wide); free(wide); }
+            free(combined);
+        }
+        free(error);
+    }
+    free(path);
+}
+
 static void prepare_rendered_print(int exportPdf) {
     if (!g_webview || !g_webviewReady) {
         MessageBoxW(g_hMainWnd, L"The rendered preview is not ready yet.", L"Tinker Editor",

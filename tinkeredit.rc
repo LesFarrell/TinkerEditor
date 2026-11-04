@@ -7,6 +7,7 @@
 #define IDR_HELP_SHORTCUTS 5
 #define IDR_BUILTIN_FORMATTING_TABLES 7
 #define IDR_BUILTIN_FORMATTING_TEXT 8
+#define IDR_ZIPTOOL_LUA 9
 
 IDI_APPICON ICON "tinkeredit.ico"
 IDR_DEFAULT_MENUS RCDATA "src/menus.lua"
@@ -15,6 +16,7 @@ IDR_BUILTIN_FORMATTING_TABLES RCDATA "src/lua/formatting_tables.lua"
 IDR_BUILTIN_FORMATTING_TEXT RCDATA "src/lua/formatting_text.lua"
 IDR_HELP_MARKDOWN RCDATA "src/help/markdown-reference.md"
 IDR_HELP_SHORTCUTS RCDATA "src/help/keyboard-shortcuts.lua"
+IDR_ZIPTOOL_LUA RCDATA "src/lua/ziptool.lua"
 1 24 "tinkeredit.manifest"
 
 VS_VERSION_INFO VERSIONINFO

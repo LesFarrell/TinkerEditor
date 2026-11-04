@@ -43,6 +43,15 @@ static int handle_file_command(HWND hwnd, WORD cmd) {
         case IDM_FILE_EXPORT_HTML:
             do_export_html();
             break;
+        case IDM_FILE_EXPORT_TEXT:
+            do_export_text();
+            break;
+        case IDM_FILE_EXPORT_RTF:
+            do_export_rtf();
+            break;
+        case IDM_FILE_EXPORT_DOCX:
+            do_export_docx();
+            break;
         case IDM_FILE_EXPORT_PDF:
             prepare_rendered_print(1);
             break;
@@ -274,6 +283,9 @@ static int handle_view_command(HWND hwnd, WORD cmd) {
         case IDM_VIEW_OUTLINE:
             toggle_outline(hwnd);
             break;
+        case IDM_VIEW_OUTLINE_ON_LEFT:
+            toggle_outline_side(hwnd);
+            break;
         case IDM_VIEW_MINIMAP:
             toggle_minimap(hwnd);
             break;
@@ -282,6 +294,9 @@ static int handle_view_command(HWND hwnd, WORD cmd) {
             break;
         case IDM_VIEW_OUTPUT_PANEL:
             toggle_output_panel();
+            break;
+        case IDM_VIEW_OUTPUT_PANEL_ON_RIGHT:
+            toggle_output_panel_side(hwnd);
             break;
         case IDM_VIEW_TERMINAL:
             show_terminal();
@@ -356,11 +371,14 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_DIFF_STAGED: show_git_staged_diff(); break;
         case IDM_GIT_LOG_FILE: show_git_file_log(); break;
         case IDM_GIT_BLAME_FILE: show_git_file_blame(); break;
-        case IDM_VIEW_GIT: show_git_panel(); break;
+        case IDM_VIEW_GIT: toggle_git_panel(); break;
+        case IDM_VIEW_GIT_ON_RIGHT: toggle_git_panel_side(g_hMainWnd); break;
+        case IDM_VIEW_MERGE_PANEL: toggle_merge_panel(); break;
         case IDM_GIT_STAGE_ALL: git_stage_all(); break;
         case IDM_GIT_UNSTAGE_ALL: git_unstage_all(); break;
         case IDM_GIT_DISCARD_ALL: git_discard_all(); break;
         case IDM_GIT_COMMIT: git_commit_prompt(); break;
+        case IDM_GIT_COMMIT_AND_PUSH: git_commit_and_push_prompt(); break;
         case IDM_GIT_PUSH: git_push(); break;
         case IDM_GIT_PULL: git_pull(); break;
         case IDM_GIT_FETCH: git_fetch(); break;
@@ -379,6 +397,9 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_STASH_APPLY: git_stash_apply_prompt(); break;
         case IDM_GIT_STASH_POP: git_stash_pop(); break;
         case IDM_GIT_STASH_DROP: git_stash_drop_prompt(); break;
+        case IDM_GIT_TAG_NEW: git_new_tag_prompt(); break;
+        case IDM_GIT_TAG_DELETE: git_delete_tag_prompt(); break;
+        case IDM_GIT_TAG_PUSH: git_push_tags(); break;
         default: return 0;
     }
     return 1;

@@ -27,12 +27,21 @@
 #include <windowsx.h>
 #include <winnetwk.h>
 
+#include "command_ids.h" /* IDM_VIEW_EXPLORER, reused as the close button's id */
 #include "path_utils.h"
 #include "settings_values.h"
 #include "theme.h"
 #include "themed_scrollbar.h"
 
 HWND g_hExplorerTree = NULL;
+/* The close button above the tree. Its id is IDM_VIEW_EXPLORER itself -
+   the same command the View menu's "File Explorer" toggle already sends -
+   so clicking it reaches toggle_explorer_panel() exactly as that menu item
+   does, with no separate dispatch case to keep in sync. Owner-drawn with
+   tinkeredit.c's own draw_debug_panel_button() (see handle_owner_draw() in
+   tinkeredit.c), the same painter the output and Git panels' own close
+   buttons use, so all three match. */
+HWND g_hExplorerClose = NULL;
 /* g_explorerVisible, g_explorerWidth and g_explorerWidthRatio are defined in
    layout_metrics.c (declared in layout_metrics.h). */
 
@@ -1576,6 +1585,12 @@ void explorer_init(HWND hParent, ExplorerOpenFileFn openFile, ExplorerPromptText
     TreeView_SetItemHeight(g_hExplorerTree, MulDiv(18, GetDpiForWindow(hParent), 96));
     SetWindowSubclass(g_hExplorerTree, ExplorerTreeSubclassProc, 1, 0);
     themed_scrollbar_attach(g_hExplorerTree, THEMED_SCROLL_TREEVIEW);
+
+    g_hExplorerClose = CreateWindowExW(0, L"BUTTON", L"X",
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, hParent, (HMENU)(UINT_PTR)IDM_VIEW_EXPLORER, GetModuleHandleW(NULL), NULL);
+    SendMessageW(g_hExplorerClose, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+
     explorer_apply_theme();
 }
 
@@ -1588,6 +1603,7 @@ void explorer_apply_theme(void)
     TreeView_SetTextColor(g_hExplorerTree, theme_fg_color());
     themed_scrollbar_refresh(g_hExplorerTree);
     InvalidateRect(g_hExplorerTree, NULL, TRUE);
+    if (g_hExplorerClose) InvalidateRect(g_hExplorerClose, NULL, TRUE);
 }
 
 void explorer_set_root(const WCHAR *rootPath)

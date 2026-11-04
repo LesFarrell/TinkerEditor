@@ -25,7 +25,7 @@ enum {
 
 typedef enum {
     SETTINGS_APPEARANCE, SETTINGS_FONT, SETTINGS_WORD_WRAP,
-    SETTINGS_PREVIEW, SETTINGS_EDITOR, SETTINGS_COMPILER, SETTINGS_PLUGINS,
+    SETTINGS_PREVIEW, SETTINGS_EDITOR, SETTINGS_COMPILER, SETTINGS_GIT, SETTINGS_PLUGINS,
     SETTINGS_PLUGIN_VALUES, SETTINGS_CATEGORY_COUNT
 } SettingsCategory;
 
@@ -46,6 +46,9 @@ typedef enum {
     SC_LUA_CAPTION, SC_LUA, SC_LUA_BROWSE,
     SC_GDB_CAPTION, SC_GDB, SC_GDB_BROWSE,
     SC_FLAGS_CAPTION, SC_FLAGS,
+    SC_DIFFTOOL_USE,
+    SC_DIFFTOOL_CAPTION, SC_DIFFTOOL, SC_DIFFTOOL_BROWSE,
+    SC_MERGETOOL_CAPTION, SC_MERGETOOL, SC_MERGETOOL_BROWSE,
     SC_PLUGINS_HINT, SC_PLUGINS_MANAGE,
     SC_PLUGIN_VALUES_HINT, SC_PLUGIN_VALUE_ADD, SC_PLUGIN_VALUE_EDIT, SC_PLUGIN_VALUE_REMOVE,
     SC_COUNT
@@ -119,6 +122,18 @@ static const SettingsControlSpec SETTINGS_CONTROLS[SC_COUNT] = {
     [SC_FLAGS_CAPTION] = { SETTINGS_COMPILER, SETTINGS_TEXT,
         L"Extra flags passed to Run/Debug C/C++ builds:", 0, 228, 380, 20, NULL, 0, NULL },
     [SC_FLAGS] = { SETTINGS_COMPILER, SETTINGS_PATH_EDIT, NULL, 0, 252, 380, 24, NULL, 0, &g_compilerExtraFlags },
+
+    [SC_DIFFTOOL_USE] = { SETTINGS_GIT, SETTINGS_CHECK,
+        L"Open file diffs in an external diff tool instead of the Output panel",
+        0, 0, 380, 22, &g_useExternalDiffTool, 1, NULL },
+    [SC_DIFFTOOL_CAPTION] = { SETTINGS_GIT, SETTINGS_TEXT, L"Diff tool (e.g. WinMerge, Beyond Compare):",
+        0, 36, 380, 20, NULL, 0, NULL },
+    [SC_DIFFTOOL] = { SETTINGS_GIT, SETTINGS_PATH_EDIT, NULL, 0, 58, 280, 24, NULL, 0, &g_externalDiffToolPath },
+    [SC_DIFFTOOL_BROWSE] = { SETTINGS_GIT, SETTINGS_BUTTON, L"Browse...", 288, 58, 92, 24, NULL, 0, NULL },
+    [SC_MERGETOOL_CAPTION] = { SETTINGS_GIT, SETTINGS_TEXT,
+        L"Merge tool (used to resolve conflicts, optional):", 0, 96, 380, 20, NULL, 0, NULL },
+    [SC_MERGETOOL] = { SETTINGS_GIT, SETTINGS_PATH_EDIT, NULL, 0, 118, 280, 24, NULL, 0, &g_externalMergeToolPath },
+    [SC_MERGETOOL_BROWSE] = { SETTINGS_GIT, SETTINGS_BUTTON, L"Browse...", 288, 118, 92, 24, NULL, 0, NULL },
 
     [SC_PLUGINS_HINT] = { SETTINGS_PLUGINS, SETTINGS_TEXT,
         L"Install, enable, or disable individual plugins:", 0, 0, 380, 20, NULL, 0, NULL },
@@ -362,7 +377,10 @@ static int is_flag_edit_whitespace(WCHAR ch) {
    field without editing it doesn't rewrite settings.json. For the flags box,
    quote_extra_compiler_flags() (see launch_native_file()/launch_msvc_file())
    re-splits the saved text into individual flags at build time. */
-static void set_compiler_string_setting(WCHAR **slot, const WCHAR *text) {
+/* Trims surrounding whitespace and stores the result in *slot if it actually
+   changed. Returns 1 when it did (so the caller knows to persist), 0 when
+   tabbing through the field without editing it left nothing to save. */
+static int set_trimmed_wstring_setting(WCHAR **slot, const WCHAR *text) {
     size_t start = 0, end = text ? wcslen(text) : 0;
     while (start < end && is_flag_edit_whitespace(text[start])) start++;
     while (end > start && is_flag_edit_whitespace(text[end - 1])) end--;
@@ -376,12 +394,20 @@ static void set_compiler_string_setting(WCHAR **slot, const WCHAR *text) {
     }
     if (value && *slot && wcscmp(value, *slot) == 0) {
         free(value);
-        return;
+        return 0;
     }
-    if (!value && !*slot) return;
+    if (!value && !*slot) return 0;
     free(*slot);
     *slot = value;
-    save_compiler_settings();
+    return 1;
+}
+
+static void set_compiler_string_setting(WCHAR **slot, const WCHAR *text) {
+    if (set_trimmed_wstring_setting(slot, text)) save_compiler_settings();
+}
+
+static void set_git_string_setting(WCHAR **slot, const WCHAR *text) {
+    if (set_trimmed_wstring_setting(slot, text)) save_git_settings();
 }
 
 /* The MSVC path box's Browse button: unlike the GCC/Clang/Zig/Lua/GDB boxes
@@ -420,6 +446,53 @@ static void choose_compiler_folder(WCHAR **slot, HWND editControl) {
     free(folder);
     save_compiler_settings();
     SetWindowTextW(editControl, *slot);
+}
+
+/* The diff tool box's Browse button: like the MSVC vcvars box, this names one
+   specific executable rather than a folder to search. */
+static void choose_diff_tool_path(HWND editControl) {
+    DWORD cap = LONG_PATH_CAPACITY;
+    WCHAR *path = (WCHAR *)calloc(cap, sizeof(WCHAR));
+    if (!path) return;
+    if (g_externalDiffToolPath) wcsncpy(path, g_externalDiffToolPath, cap - 1);
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMainWnd;
+    ofn.lpstrFilter = L"Programs (*.exe)\0*.exe\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = cap;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (GetOpenFileNameW(&ofn)) {
+        replace_wstring(&g_externalDiffToolPath, path);
+        save_git_settings();
+        SetWindowTextW(editControl, g_externalDiffToolPath);
+    }
+    free(path);
+}
+
+static void choose_merge_tool_path(HWND editControl) {
+    DWORD cap = LONG_PATH_CAPACITY;
+    WCHAR *path = (WCHAR *)calloc(cap, sizeof(WCHAR));
+    if (!path) return;
+    if (g_externalMergeToolPath) wcsncpy(path, g_externalMergeToolPath, cap - 1);
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMainWnd;
+    ofn.lpstrFilter = L"Programs (*.exe)\0*.exe\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = cap;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    if (GetOpenFileNameW(&ofn)) {
+        replace_wstring(&g_externalMergeToolPath, path);
+        save_git_settings();
+        SetWindowTextW(editControl, g_externalMergeToolPath);
+    }
+    free(path);
+}
+
+static void toggle_use_external_diff_tool(void) {
+    g_useExternalDiffTool = !g_useExternalDiffTool;
+    save_git_settings();
 }
 
 static int selected_plugin_value(SettingsDialogState *state) {
@@ -595,7 +668,7 @@ static void refresh_settings_dialog_theme(HWND hwnd, SettingsDialogState *state)
 
 static void create_settings_category_list(HWND hwnd, SettingsDialogState *state, HINSTANCE instance) {
     static const WCHAR *const categories[] = {
-        L"Appearance", L"Font", L"Word Wrap", L"Preview", L"Editor", L"Compiler", L"Plugins"
+        L"Appearance", L"Font", L"Word Wrap", L"Preview", L"Editor", L"Compiler", L"Git", L"Plugins"
     };
     state->categoryList = CreateWindowExW(0, L"LISTBOX", L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT |
@@ -684,7 +757,8 @@ static void commit_settings_edit(SettingsDialogState *state, SettingsControl con
     if (!slot) return;
     WCHAR text[1024];
     GetWindowTextW(edit, text, sizeof(text) / sizeof(text[0]));
-    set_compiler_string_setting(slot, text);
+    if (SETTINGS_CONTROLS[control].category == SETTINGS_GIT) set_git_string_setting(slot, text);
+    else set_compiler_string_setting(slot, text);
     SetWindowTextW(edit, *slot ? *slot : L"");
 }
 
@@ -711,6 +785,9 @@ static void handle_settings_button(HWND hwnd, SettingsDialogState *state, Settin
             /* Each Browse button directly follows the path box it fills in. */
             choose_compiler_folder(SETTINGS_CONTROLS[control - 1].path, state->controls[control - 1]);
             break;
+        case SC_DIFFTOOL_USE: toggle_use_external_diff_tool(); break;
+        case SC_DIFFTOOL_BROWSE: choose_diff_tool_path(state->controls[SC_DIFFTOOL]); break;
+        case SC_MERGETOOL_BROWSE: choose_merge_tool_path(state->controls[SC_MERGETOOL]); break;
         case SC_PLUGINS_MANAGE: manage_plugins(); populate_settings_plugin_values(state); break;
         case SC_PLUGIN_VALUE_ADD: add_plugin_value(state); break;
         case SC_PLUGIN_VALUE_EDIT: edit_plugin_value(state); break;

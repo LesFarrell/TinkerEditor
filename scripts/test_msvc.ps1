@@ -66,6 +66,7 @@ $cmarkObjects = foreach ($source in $cmarkSources) {
 
 $tests = @(
     @{ Name="test_parser"; Sources=@("src\markdown.c"); Objects=$cmarkObjects; Libraries=@(); Cmark=$true },
+    @{ Name="test_markdown_export"; Sources=@("src\markdown_export.c"); Objects=$cmarkObjects; Libraries=@(); Cmark=$true },
     @{ Name="test_editor_commands"; Sources=@("src\editor_commands.c"); Libraries=@("user32.lib") },
     @{ Name="test_text_search"; Sources=@("src\text_search.c"); Libraries=@("user32.lib") },
     @{ Name="test_language"; Sources=@("src\editor_language.c", "src\theme.c"); Libraries=@("user32.lib", "shlwapi.lib", "gdi32.lib", "uxtheme.lib") },

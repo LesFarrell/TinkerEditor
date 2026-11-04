@@ -26,5 +26,7 @@ void load_find_settings(void);
 void save_find_settings(void);
 void load_compiler_settings(void);
 void save_compiler_settings(void);
+void load_git_settings(void);
+void save_git_settings(void);
 
 #endif

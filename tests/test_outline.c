@@ -4,7 +4,7 @@
 
 /* outline_minimap.c reads these settings and saves the layout; the heading
    parser under test uses none of them. */
-int g_editorDarkMode, g_outlineVisible, g_minimapVisible;
+int g_editorDarkMode, g_outlineVisible, g_outlineOnLeft, g_minimapVisible;
 int g_splitEditorVisible, g_splitEditorRatio, g_splitEditorVertical;
 void save_layout_settings(void) {}
 
