@@ -41,7 +41,7 @@ return {
     { "&Save", "file.save" },
     { "Save &As...", "file.save_as" },
     { "Save A&ll", "file.save_all" },
-    { "&Export As", {
+    { "&Export As...", {
       { "Rendered &HTML...", "file.export_html" },
       { "Rendered &PDF...", "file.export_pdf" },
       { "&Text...", "file.export_text" },
