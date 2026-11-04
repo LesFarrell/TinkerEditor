@@ -608,6 +608,7 @@ static int command_state(UINT id, CommandState *state) {
         case IDM_VIEW_EXPLORER: STATE_CHECK(g_explorerVisible); break;
         case IDM_VIEW_GIT: STATE_CHECK(g_gitPanelVisible); break;
         case IDM_VIEW_GIT_ON_RIGHT: STATE_CHECK(g_gitPanelOnRight); break;
+        case IDM_VIEW_MERGE_PANEL: STATE_CHECK(g_mergePanelVisible); break;
         case IDM_VIEW_OUTPUT_PANEL: STATE_CHECK(g_outputPanelVisible); break;
         case IDM_VIEW_OUTPUT_PANEL_ON_RIGHT: STATE_CHECK(g_outputPanelOnRight); break;
         case IDM_RUN_USE_CONSOLE: STATE_CHECK(g_runInConsole); break;
@@ -1191,6 +1192,10 @@ static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
    panel is a full-height side panel like the explorer, so layout() carves
    it out alongside that one, before the tab strip and the rest. */
 static void layout_git_panel(HWND hwnd, LayoutArea *area);
+/* Implemented in merge_panel.inc, included right after git_panel.inc - the
+   Merge Conflicts panel is always right-docked, carved from whatever area{}
+   the Git panel (if also docked right) left behind. */
+static void layout_merge_panel(HWND hwnd, LayoutArea *area);
 
 static void layout(HWND hwnd) {
     RECT rc;
@@ -1201,6 +1206,7 @@ static void layout(HWND hwnd) {
     layout_toolbar(&area);
     layout_explorer(hwnd, &area);
     layout_git_panel(hwnd, &area);
+    layout_merge_panel(hwnd, &area);
     layout_tabs(&area);
     layout_output_panel(hwnd, &area);
     layout_outline(hwnd, &area);

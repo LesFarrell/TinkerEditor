@@ -106,6 +106,10 @@
 #define IDM_GIT_TAG_NEW                446
 #define IDM_GIT_TAG_DELETE             447
 #define IDM_GIT_TAG_PUSH               448
+#define IDM_FILE_EXPORT_TEXT           449
+#define IDM_FILE_EXPORT_RTF            450
+#define IDM_VIEW_MERGE_PANEL           451
+#define IDM_FILE_EXPORT_DOCX           452
 #define IDM_PLUGIN_COMMAND_0      2000 /* IDM_PLUGIN_COMMAND_0 .. IDM_PLUGIN_COMMAND_0+PLUGIN_MAX_COMMANDS-1 */
 
 /* ---- menu command IDs: Markdown formatting toolbar/menu ---- */

@@ -42,6 +42,16 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define ID_GIT_CLOSE 129
 #define ID_GIT_COMMIT_MESSAGE 130
 #define ID_GIT_COMMIT_PUSH 131
+#define ID_MERGE_PANEL 132
+#define ID_MERGE_LIST 133
+#define ID_MERGE_VIEW 134
+#define ID_MERGE_ACCEPT_OURS 135
+#define ID_MERGE_ACCEPT_THEIRS 136
+#define ID_MERGE_ACCEPT_BOTH 137
+#define ID_MERGE_NEXT 138
+#define ID_MERGE_REFRESH 139
+#define ID_MERGE_SAVE 140
+#define ID_MERGE_CLOSE 141
 
 /* ---- timer IDs ---- */
 #define IDT_PREVIEW_UPDATE 1
@@ -135,6 +145,11 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define GIT_PANEL_WIDTH 280         /* until the user drags its splitter */
 #define GIT_PANEL_MIN_WIDTH 180
 #define GIT_COMMIT_MESSAGE_HEIGHT 72 /* the commit message box, a few lines tall */
+/* The Merge Conflicts panel always docks at the right edge (see
+   layout_merge_panel() in merge_panel.inc). */
+#define MERGE_PANEL_WIDTH 340
+#define MERGE_PANEL_MIN_WIDTH 240
+#define MERGE_LIST_HEIGHT 90       /* the conflicted-file list, above the hunk view */
 
 /* Larger custom preview stylesheets are refused rather than loaded. */
 #define CUSTOM_CSS_MAX_BYTES (4 * 1024 * 1024)
@@ -149,6 +164,7 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define IDR_HELP_SHORTCUTS 5 /* src/help/keyboard-shortcuts.lua, builds Help > Keyboard Shortcuts */
 #define IDR_BUILTIN_FORMATTING_TABLES 7
 #define IDR_BUILTIN_FORMATTING_TEXT 8
+#define IDR_ZIPTOOL_LUA 9 /* src/lua/ziptool.lua, used to package File > Export as Word (.docx) */
 
 /* ---- forward declarations for functions defined in tinkeredit.c ----
    Grouped roughly by area: preview/theme, menu/layout, spell check,

@@ -17,6 +17,7 @@
 #include "plugin_host_internal.h"
 
 #include "lua_editor_api.h"
+#include "plugin_zip.h"
 
 #include "lauxlib.h"
 #include "lualib.h"
@@ -238,6 +239,7 @@ static int open_environment(lua_State *L) {
     lua_editor_api_push(L);
     lua_setglobal(L, "editor");
     plugin_registry_open(L);
+    plugin_zip_install(L); /* installs `zip`, or leaves it undefined - see plugin_zip.c */
     lua_pushcfunction(L, plugin_require);
     lua_setglobal(L, "require");
     plugin_lua_install_hook(L);

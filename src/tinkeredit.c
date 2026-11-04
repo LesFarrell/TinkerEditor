@@ -48,6 +48,9 @@
 #include "file_io.h"
 #include "recovery.h"
 #include "markdown.h"
+#include "markdown_export.h"
+#include "docx_zip.h"
+#include "plugin_zip.h"
 #include "menu_commands.h"
 #include "outline_minimap.h"
 #include "output_process.h"
@@ -353,6 +356,7 @@ static RECT g_outputSplitterRect = {0}; /* above the output panel, empty while i
 static int g_draggingOutput = 0;
 static RECT g_gitPanelSplitterRect = {0}; /* the Git panel's splitter, empty while the panel is hidden */
 static int g_draggingGitPanel = 0;
+static int g_draggingMergePanel = 0; /* g_mergePanelSplitterRect lives in merge_panel.inc, included before this is used */
 int g_outputPanelVisible = 0;
 int g_outputPanelHeight = -1; /* pixels; -1 until the user drags the splitter */
 int g_outputPanelOnRight = 0; /* docked beside the editor instead of under it */
@@ -527,6 +531,7 @@ static void show_error(const WCHAR *message) {
 #include "internal/debugger.inc"
 #include "internal/output_panel.inc"
 #include "internal/git_panel.inc"
+#include "internal/merge_panel.inc"
 
 #include "internal/outline_host.inc"
 
@@ -685,6 +690,7 @@ static void initialize_main_window(HWND hwnd) {
     create_document_tabs(hwnd, dpi);
     create_output_panel(hwnd); /* before the editor views, which apply the font to it */
     create_git_panel(hwnd);
+    create_merge_panel(hwnd);
     create_editor_views(hwnd);
     initialize_first_document();
     create_preview_control(hwnd);
@@ -1098,7 +1104,7 @@ static int set_splitter_cursor(HWND hwnd) {
     if (output_splitter_contains(point.x, point.y))
         SetCursor(LoadCursorA(NULL, (LPCSTR)(g_outputPanelOnRight ? IDC_SIZEWE : IDC_SIZENS)));
     else if (splitter_contains_x(point.x) || explorer_splitter_contains_x(point.x) ||
-             git_panel_splitter_contains_x(point.x))
+             git_panel_splitter_contains_x(point.x) || merge_panel_splitter_contains_x(point.x))
         SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_SIZEWE));
     else if (split_editor_splitter_contains(point.x, point.y))
         SetCursor(LoadCursorA(NULL, (LPCSTR)(g_splitEditorVertical ? IDC_SIZEWE : IDC_SIZENS)));
@@ -1116,6 +1122,8 @@ static void begin_splitter_drag(HWND hwnd, int x, int y) {
         g_draggingExplorer = 1;
     else if (git_panel_splitter_contains_x(x))
         g_draggingGitPanel = 1;
+    else if (merge_panel_splitter_contains_x(x))
+        g_draggingMergePanel = 1;
     else if (split_editor_splitter_contains(x, y))
         g_draggingSplitEditor = 1;
     else
@@ -1147,6 +1155,15 @@ static void update_splitter_drag(HWND hwnd, int x, int y) {
         }
         if (width != g_gitPanelWidth) {
             g_gitPanelWidth = width;
+            positionChanged = 1;
+        }
+    } else if (g_draggingMergePanel) {
+        /* Always right-docked: the panel's right edge stays put while its
+           left edge (the splitter) follows the mouse, same as the Git
+           panel's own right-docked case above. */
+        int width = g_mergePanelSplitterRect.right + g_mergePanelWidth - x - SPLITTER_WIDTH / 2;
+        if (width != g_mergePanelWidth) {
+            g_mergePanelWidth = width;
             positionChanged = 1;
         }
     } else if (g_draggingOutput) {
@@ -1181,8 +1198,9 @@ static void update_splitter_drag(HWND hwnd, int x, int y) {
 
 static void end_splitter_drag(void) {
     if (!g_dragging && !g_draggingExplorer && !g_draggingSplitEditor && !g_draggingOutput &&
-        !g_draggingGitPanel) return;
-    g_dragging = g_draggingExplorer = g_draggingSplitEditor = g_draggingOutput = g_draggingGitPanel = 0;
+        !g_draggingGitPanel && !g_draggingMergePanel) return;
+    g_dragging = g_draggingExplorer = g_draggingSplitEditor = g_draggingOutput = g_draggingGitPanel =
+        g_draggingMergePanel = 0;
     ReleaseCapture();
     save_layout_settings();
 }

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/plugin_host.h"
+#include "../src/plugin_zip.h"
 #include "../src/file_io.h"
 #include "../src/path_utils.h"
 #include "../third_party/scintilla/include/Scintilla.h"
@@ -588,6 +589,46 @@ static void test_editor_api(HWND editor) {
            "a classic catastrophic-backtracking pattern is rejected before it reaches Scintilla");
     expect(run_fails(regex + 2, editor, "catastrophic backtracking"),
            "a star-quantified nested group is also rejected");
+}
+
+static void test_zip_api(HWND editor) {
+    int first = load_ok("zip.lua",
+        "menu.add('Round trip', function()\n"
+        "  local bytes, err = zip.pack({\n"
+        "    { name = 'a.txt', data = 'hello' },\n"
+        "    { name = 'dir/b.txt', data = 'world' },\n"
+        "  })\n"
+        "  assert(bytes and not err, err)\n"
+        "  assert(#bytes > 0)\n"
+        "  local entries, uerr = zip.unpack(bytes)\n"
+        "  assert(entries and not uerr, uerr)\n"
+        "  assert(#entries == 2, 'expected 2 entries, got ' .. #entries)\n"
+        "  local byName = {}\n"
+        "  for _, e in ipairs(entries) do byName[e.name] = e.data end\n"
+        "  assert(byName['a.txt'] == 'hello')\n"
+        "  assert(byName['dir/b.txt'] == 'world')\n"
+        "end)\n"
+        /* Not round-tripped through zip.unpack: ziptool.lua's unzip_file()
+           treats any central directory under 46 bytes as truncated, with no
+           exception for the legitimately-0-byte one a zero-entry archive
+           has - an upstream quirk, not a bug in this integration, so this
+           only checks the pack side of the empty case. */
+        "menu.add('Empty archive', function()\n"
+        "  local bytes = assert(zip.pack({}))\n"
+        "  assert(#bytes > 0)\n"
+        "end)\n"
+        "menu.add('Rejects non-table', function()\n"
+        "  assert(not pcall(zip.pack, 'nope'))\n"
+        "  assert(not pcall(zip.unpack, {}))\n" /* a number would coerce to a string and just fail gracefully instead */
+        "end)\n"
+        "menu.add('Unpack rejects garbage', function()\n"
+        "  local entries, err = zip.unpack('not a zip file')\n"
+        "  assert(entries == nil and err)\n"
+        "end)\n");
+    expect(run_ok(first, editor), "zip.pack/zip.unpack round-trip preserves names and bytes");
+    expect(run_ok(first + 1, editor), "zip.pack/zip.unpack handle an empty archive");
+    expect(run_ok(first + 2, editor), "zip.pack/zip.unpack validate their argument types");
+    expect(run_ok(first + 3, editor), "zip.unpack reports an error instead of crashing on non-zip input");
 }
 
 static void test_ui(HWND editor) {
@@ -2630,6 +2671,10 @@ int main(void) {
         .schedule_deferred = fake_schedule_deferred
     };
     plugin_host_set_callbacks(&fakes);
+    int ziptoolLength = 0;
+    char *ziptoolSource = read_bytes_file(L"src\\lua\\ziptool.lua", &ziptoolLength);
+    if (!ziptoolSource) { fprintf(stderr, "Cannot load src/lua/ziptool.lua\n"); FreeLibrary(scintilla); return 1; }
+    plugin_host_set_ziptool_source(ziptoolSource, (size_t)ziptoolLength);
     test_commands(editor);
     test_menu_enabled(editor);
     test_separators(editor);
@@ -2637,6 +2682,7 @@ int main(void) {
     test_editor_api(editor);
     test_checkboxes_and_config(editor);
     test_ui(editor);
+    test_zip_api(editor);
     test_deferred(editor);
     test_events(editor);
     test_load_failures();

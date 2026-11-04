@@ -83,6 +83,7 @@ static WCHAR *g_gitStatusWorkspace;
    file. Git status collection stays beside the shared OutputProcess runner;
    branch caches, commands and TreeView interaction live behind this boundary. */
 static void render_git_panel(void);
+static void render_merge_panel_list(void); /* merge_panel.inc */
 static void git_stage_all(void);
 static void git_commit_prompt(void);
 static void git_commit_and_push_prompt(void);
@@ -212,9 +213,11 @@ static void apply_debug_tab_theme(void) {
     }
 }
 
-/* Implemented in git_panel.inc, included later in the unity build. */
+/* Implemented in git_panel.inc/merge_panel.inc, included later in the unity build. */
 static void apply_git_panel_theme(void);
 static void apply_git_panel_font(const char *faceUtf8);
+static void apply_merge_panel_theme(void);
+static void apply_merge_panel_font(const char *faceUtf8);
 
 static void apply_output_panel_theme(void) {
     if (!g_hOutputPanel) return;
@@ -226,6 +229,7 @@ static void apply_output_panel_theme(void) {
     terminal_view_apply_theme(g_terminalView, ansi, p->fg, p->bg);
     apply_debug_tab_theme();
     apply_git_panel_theme();
+    apply_merge_panel_theme();
     InvalidateRect(g_hOutputPanel, NULL, TRUE);
     HWND buttons[OUTPUT_TAB_COUNT + 7];
     size_t n = 0;
@@ -251,6 +255,7 @@ static void apply_output_panel_font(const char *faceUtf8) {
     }
     terminal_view_apply_font(g_terminalView, faceUtf8, g_fontPointSize, g_fontWeight);
     apply_git_panel_font(faceUtf8);
+    apply_merge_panel_font(faceUtf8);
 }
 
 /* The Stop button and the tab labels follow what's running. */
@@ -529,6 +534,7 @@ finished:
     for (int i = 0; i < g_documentStore.count; i++) update_tab_label(i);
     update_status_position();
     render_git_panel();
+    render_merge_panel_list();
 }
 
 static void handle_git_status_chunk(OutputChunk *chunk) {

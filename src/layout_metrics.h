@@ -42,4 +42,12 @@ extern int g_gitPanelOnRight;
    of which side it's docked - 0 when it isn't showing. */
 int git_panel_width(int focusModeActive);
 
+/* Same shape again for the Merge Conflicts panel (merge_panel.inc), which
+   always docks at the right edge - no "on right" flag needed. */
+extern int g_mergePanelVisible;
+extern int g_mergePanelWidth;
+/* The Merge panel's own occupied width (panel plus its splitter) - 0 when
+   it isn't showing. */
+int merge_panel_width(int focusModeActive);
+
 #endif

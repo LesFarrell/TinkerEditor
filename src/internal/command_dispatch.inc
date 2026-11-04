@@ -43,6 +43,15 @@ static int handle_file_command(HWND hwnd, WORD cmd) {
         case IDM_FILE_EXPORT_HTML:
             do_export_html();
             break;
+        case IDM_FILE_EXPORT_TEXT:
+            do_export_text();
+            break;
+        case IDM_FILE_EXPORT_RTF:
+            do_export_rtf();
+            break;
+        case IDM_FILE_EXPORT_DOCX:
+            do_export_docx();
+            break;
         case IDM_FILE_EXPORT_PDF:
             prepare_rendered_print(1);
             break;
@@ -364,6 +373,7 @@ static int handle_git_command(WORD cmd) {
         case IDM_GIT_BLAME_FILE: show_git_file_blame(); break;
         case IDM_VIEW_GIT: toggle_git_panel(); break;
         case IDM_VIEW_GIT_ON_RIGHT: toggle_git_panel_side(g_hMainWnd); break;
+        case IDM_VIEW_MERGE_PANEL: toggle_merge_panel(); break;
         case IDM_GIT_STAGE_ALL: git_stage_all(); break;
         case IDM_GIT_UNSTAGE_ALL: git_unstage_all(); break;
         case IDM_GIT_DISCARD_ALL: git_discard_all(); break;

@@ -180,6 +180,9 @@ void load_layout_settings(void) {
     int gitPanelWidth = read_profile_int(L"View", L"GitPanelWidth", -1, path);
     g_gitPanelWidth = gitPanelWidth > 0 ? gitPanelWidth : -1;
     g_gitPanelOnRight = read_profile_int(L"View", L"GitPanelOnRight", 1, path) != 0;
+    g_mergePanelVisible = read_profile_int(L"View", L"MergePanelVisible", 0, path) != 0;
+    int mergePanelWidth = read_profile_int(L"View", L"MergePanelWidth", -1, path);
+    g_mergePanelWidth = mergePanelWidth > 0 ? mergePanelWidth : -1;
     g_editorZoom = read_profile_int(L"View", L"EditorZoom", g_editorZoom, path);
     if (g_editorZoom < -10) g_editorZoom = -10;
     if (g_editorZoom > 20) g_editorZoom = 20;
@@ -269,6 +272,9 @@ void save_layout_settings(void) {
     if (g_gitPanelWidth > 0)
         write_profile_int(L"View", L"GitPanelWidth", g_gitPanelWidth, path);
     write_profile_int(L"View", L"GitPanelOnRight", g_gitPanelOnRight, path);
+    write_profile_int(L"View", L"MergePanelVisible", g_mergePanelVisible, path);
+    if (g_mergePanelWidth > 0)
+        write_profile_int(L"View", L"MergePanelWidth", g_mergePanelWidth, path);
     write_profile_int(L"View", L"SplitEditorVisible", g_splitEditorVisible, path);
     write_profile_int(L"View", L"SplitEditorRatio", g_splitEditorRatio, path);
     write_profile_int(L"View", L"SplitEditorVertical", g_splitEditorVertical, path);

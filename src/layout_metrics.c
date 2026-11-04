@@ -15,6 +15,9 @@ int g_gitPanelVisible = 0;
 int g_gitPanelWidth = -1;
 int g_gitPanelOnRight = 1;
 
+int g_mergePanelVisible = 0;
+int g_mergePanelWidth = -1;
+
 int explorer_panel_width(int focusModeActive)
 {
     if (!g_hExplorerTree || !g_explorerVisible || focusModeActive)
@@ -29,10 +32,18 @@ int git_panel_width(int focusModeActive)
     return (g_gitPanelWidth >= 0 ? g_gitPanelWidth : 0) + SPLITTER_WIDTH;
 }
 
+int merge_panel_width(int focusModeActive)
+{
+    if (!g_mergePanelVisible || focusModeActive)
+        return 0;
+    return (g_mergePanelWidth >= 0 ? g_mergePanelWidth : 0) + SPLITTER_WIDTH;
+}
+
 /* The x-offset everything beside these panels is shifted by: the explorer's
    own width (it's always docked at the left) plus the Git panel's, when
    that one is also currently docked at the left (0 when it's docked at the
-   right instead, hidden, or in focus mode). */
+   right instead, hidden, or in focus mode). The Merge panel always docks at
+   the right, so it never affects this. */
 int explorer_content_x(int focusModeActive)
 {
     int width = explorer_panel_width(focusModeActive);
