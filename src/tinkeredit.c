@@ -551,6 +551,27 @@ static void explorer_request_change_root(const WCHAR *path) {
     adopt_workspace_folder(g_hMainWnd, path);
 }
 
+/* A file dragged out of the explorer tree and released over the editor (or
+   the split editor) inserts its wikilink text there; released anywhere else,
+   the drag is simply abandoned. */
+static void explorer_drop_wikilink(const WCHAR *text, POINT screenPt) {
+    HWND target = WindowFromPoint(screenPt);
+    if (target != g_hEdit && target != g_hSplitEdit) return;
+    POINT clientPt = screenPt;
+    ScreenToClient(target, &clientPt);
+    Sci_Position position = (Sci_Position)SendMessageA(target, SCI_POSITIONFROMPOINTCLOSE,
+                                                        (WPARAM)clientPt.x, (LPARAM)clientPt.y);
+    if (position < 0) return;
+    char *utf8 = to_utf8(text);
+    if (!utf8) return;
+    SendMessageA(target, SCI_BEGINUNDOACTION, 0, 0);
+    SendMessageA(target, SCI_SETSEL, (WPARAM)position, (LPARAM)position);
+    SendMessageA(target, SCI_REPLACESEL, 0, (LPARAM)utf8);
+    SendMessageA(target, SCI_ENDUNDOACTION, 0, 0);
+    free(utf8);
+    SetFocus(target);
+}
+
 static int window_dpi(HWND hwnd) {
     HDC hdc = GetDC(hwnd);
     int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
@@ -684,7 +705,7 @@ static void initialize_main_window(HWND hwnd) {
     create_navigation_controls(hwnd);
 
     explorer_init(hwnd, explorer_request_open, show_text_input, reveal_path_in_explorer,
-                  explorer_path_renamed, explorer_request_change_root);
+                  explorer_path_renamed, explorer_request_change_root, explorer_drop_wikilink);
     /* Populating the tree (explorer_set_root(), in run_deferred_startup_init)
        waits until the window is already shown - walking the workspace folder
        is one of the more expensive steps here and the window doesn't need it

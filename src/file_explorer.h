@@ -38,12 +38,19 @@ typedef void (*ExplorerRenameFn)(const WCHAR *oldPath, const WCHAR *newPath, int
    persistence and recent-workspace bookkeeping associated with that change. */
 typedef void (*ExplorerChangeRootFn)(const WCHAR *path);
 
+/* Called when a file dragged out of the explorer tree is released over some
+   other window, with the text file_explorer.c built for it (currently always
+   a "[[Note Name]]" wikilink - see wikilink_text_for_path() in file_explorer.c)
+   and the drop point in screen coordinates. tinkeredit.c decides whether that
+   point is actually over the editor and, if so, inserts the text there. */
+typedef void (*ExplorerDropTextFn)(const WCHAR *text, POINT screenPt);
+
 /* Creates the explorer's TreeView child control (initially hidden) and
    records the callbacks used to reach tinkeredit.c's static functions. Call
    once, from initialize_main_window(). */
 void explorer_init(HWND hParent, ExplorerOpenFileFn openFile, ExplorerPromptTextFn promptText,
                    ExplorerRevealFn revealPath, ExplorerRenameFn renamedPath,
-                   ExplorerChangeRootFn changeRoot);
+                   ExplorerChangeRootFn changeRoot, ExplorerDropTextFn dropText);
 
 /* Re-applies dark/light native theming (scrollbars, background/text colour)
    to the tree control. Call whenever the editor theme (g_editorDarkMode) changes. */

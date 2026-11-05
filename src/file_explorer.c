@@ -84,6 +84,7 @@ static ExplorerPromptTextFn s_promptText = NULL;
 static ExplorerRevealFn s_revealPath = NULL;
 static ExplorerRenameFn s_renamedPath = NULL;
 static ExplorerChangeRootFn s_changeRoot = NULL;
+static ExplorerDropTextFn s_dropText = NULL;
 static WCHAR *s_root = NULL;
 static HTREEITEM s_rootItem = NULL;
 static int s_showingRoots = 0;
@@ -99,6 +100,17 @@ static CRITICAL_SECTION s_pendingLock;
 static WCHAR **s_pendingDirs = NULL;
 static int s_pendingCount = 0;
 static int s_pendingCapacity = 0;
+
+/* ---- dragging a file out of the tree to drop its wikilink elsewhere ----
+   A TreeView has no built-in "drag this item out" gesture; TVN_BEGINDRAGW
+   just reports that one started, and it's on the control (really this
+   subclass, via SetCapture()) to track the mouse until the button comes up -
+   the same manual pattern Win32 TreeView drag samples have always used.
+   Only a plain file can be dragged: directories and the parent-folder/
+   root-choice placeholder items have nothing to drop. */
+static int s_dragging = 0;
+static WCHAR *s_dragPath = NULL;
+static HIMAGELIST s_dragImageList = NULL;
 
 static void handle_keyboard_context_menu(void);
 
@@ -1008,6 +1020,50 @@ static void run_pending_navigation(void)
     free(target);
 }
 
+static void end_tree_drag(void)
+{
+    if (!s_dragging)
+        return;
+    s_dragging = 0;
+    ImageList_DragLeave(NULL);
+    ImageList_EndDrag();
+    if (s_dragImageList)
+    {
+        ImageList_Destroy(s_dragImageList);
+        s_dragImageList = NULL;
+    }
+    ShowCursor(TRUE);
+    ReleaseCapture();
+    free(s_dragPath);
+    s_dragPath = NULL;
+}
+
+static void begin_tree_drag(NMTREEVIEWW *info)
+{
+    ExplorerItemData *data = (ExplorerItemData *)info->itemNew.lParam;
+    if (!data || data->isDirectory || data->isParentLink || data->isRootChoice)
+        return;
+    TreeView_SelectItem(g_hExplorerTree, info->itemNew.hItem);
+    s_dragImageList = TreeView_CreateDragImage(g_hExplorerTree, info->itemNew.hItem);
+    if (!s_dragImageList)
+        return;
+    free(s_dragPath);
+    s_dragPath = wcsdup_heap(data->fullPath);
+    if (!s_dragPath)
+    {
+        ImageList_Destroy(s_dragImageList);
+        s_dragImageList = NULL;
+        return;
+    }
+    POINT screenPt = info->ptDrag;
+    ClientToScreen(g_hExplorerTree, &screenPt);
+    ImageList_BeginDrag(s_dragImageList, 0, 0, 0);
+    ImageList_DragEnter(NULL, screenPt.x, screenPt.y);
+    ShowCursor(FALSE);
+    SetCapture(g_hExplorerTree);
+    s_dragging = 1;
+}
+
 static LRESULT CALLBACK ExplorerTreeSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
                                                  LPARAM lParam, UINT_PTR id, DWORD_PTR data)
 {
@@ -1023,8 +1079,36 @@ static LRESULT CALLBACK ExplorerTreeSubclassProc(HWND hwnd, UINT msg, WPARAM wPa
         handle_keyboard_context_menu();
         return 0;
     }
+    if (s_dragging && msg == WM_MOUSEMOVE)
+    {
+        POINT screenPt;
+        GetCursorPos(&screenPt);
+        ImageList_DragMove(screenPt.x, screenPt.y);
+        return 0;
+    }
+    if (s_dragging && msg == WM_LBUTTONUP)
+    {
+        POINT screenPt;
+        GetCursorPos(&screenPt);
+        WCHAR *path = s_dragPath;
+        s_dragPath = NULL; /* claimed here so end_tree_drag() doesn't free it first */
+        end_tree_drag();
+        WCHAR *text = path ? wikilink_text_for_path(path) : NULL;
+        if (text && s_dropText) s_dropText(text, screenPt);
+        free(text);
+        free(path);
+        return 0;
+    }
+    if (s_dragging && (msg == WM_CAPTURECHANGED || (msg == WM_KEYDOWN && wParam == VK_ESCAPE)))
+    {
+        end_tree_drag();
+        return 0;
+    }
     if (msg == WM_NCDESTROY)
+    {
+        end_tree_drag();
         RemoveWindowSubclass(hwnd, ExplorerTreeSubclassProc, 1);
+    }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
@@ -1357,6 +1441,9 @@ void explorer_handle_notify(NMHDR *notification)
     case TVN_DELETEITEMW:
         handle_delete_item((NMTREEVIEWW *)notification);
         return;
+    case TVN_BEGINDRAGW:
+        begin_tree_drag((NMTREEVIEWW *)notification);
+        return;
     case NM_CLICK:
         handle_click();
         return;
@@ -1589,7 +1676,7 @@ void explorer_handle_change_message(void)
 
 void explorer_init(HWND hParent, ExplorerOpenFileFn openFile, ExplorerPromptTextFn promptText,
                    ExplorerRevealFn revealPath, ExplorerRenameFn renamedPath,
-                   ExplorerChangeRootFn changeRoot)
+                   ExplorerChangeRootFn changeRoot, ExplorerDropTextFn dropText)
 {
     s_hParent = hParent;
     s_openFile = openFile;
@@ -1597,11 +1684,12 @@ void explorer_init(HWND hParent, ExplorerOpenFileFn openFile, ExplorerPromptText
     s_revealPath = revealPath;
     s_renamedPath = renamedPath;
     s_changeRoot = changeRoot;
+    s_dropText = dropText;
     InitializeCriticalSection(&s_pendingLock);
 
     g_hExplorerTree = CreateWindowExW(0, WC_TREEVIEWW, L"",
                                       WS_CHILD | WS_VSCROLL | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT |
-                                          TVS_SHOWSELALWAYS | TVS_DISABLEDRAGDROP,
+                                          TVS_SHOWSELALWAYS,
                                       0, 0, 0, 0, hParent, (HMENU)(UINT_PTR)ID_EXPLORER_TREE, GetModuleHandleW(NULL), NULL);
     if (!g_hExplorerTree)
         return;
