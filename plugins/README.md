@@ -1,8 +1,8 @@
 # Writing Tinker Editor plugins
 
-A Tinker Editor plugin is a Lua script that adds commands, menus, and automatic actions to the editor. Plugins can read and change the document, ask simple questions, and show messages. They can't access arbitrary files, start programs, or reach the network. A folder extension can load its own Lua modules through the restricted `require` function.
+A Tinker Editor plugin is a Lua script that adds commands, menus, and automatic actions to the editor. Plugins can read and change the document, ask simple questions, and show messages. They can't access arbitrary files, start programs, or reach the network, with two narrow, explicit exceptions - see [`sqlite`](#sqlite) and [`fs`](#fs) below. A folder extension can load its own Lua modules through the restricted `require` function.
 
-This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes/JSON/YAML stores and a SQLite browser, and developer-oriented extensions.
+This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes/JSON/YAML stores, a SQLite browser, a wikilink/backlinks notebook, and developer-oriented extensions.
 
 Paths below use `%APPDATA%\tinkeredit`; in portable mode use `portable-data` beside `tinkeredit.exe` instead.
 
@@ -393,7 +393,7 @@ end
 
 ### sqlite
 
-The one deliberate exception to "plugins can't touch arbitrary files": `sqlite.open(path)` opens or creates a real SQLite database file at `path`, backed by `winsqlite3.dll`, the SQLite build Windows 10/11 already ships for its own apps - no extra install, no bundled library. Use it for structured data a plugin wants to keep, query, or sort, such as a personal log or notes database. `sqlite` is undefined on a system without `winsqlite3.dll` (older Windows), so check `sqlite ~= nil` before relying on it, or let the resulting error surface.
+A deliberate exception to "plugins can't touch arbitrary files": `sqlite.open(path)` opens or creates a real SQLite database file at `path`, backed by `winsqlite3.dll`, the SQLite build Windows 10/11 already ships for its own apps - no extra install, no bundled library. Use it for structured data a plugin wants to keep, query, or sort, such as a personal log or notes database. `sqlite` is undefined on a system without `winsqlite3.dll` (older Windows), so check `sqlite ~= nil` before relying on it, or let the resulting error surface.
 
 #### `sqlite.open(path)`
 
@@ -423,6 +423,29 @@ db:close()
 ```
 
 [`sqlite-notes.lua`](sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table, and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
+
+### fs
+
+The other deliberate exception to "plugins can't touch arbitrary files": read-only, whole-folder access, for a plugin that genuinely needs to look at more than the open document - a wikilink/backlinks index across a notes folder, say. Both functions only ever read; there is no `fs.write_text` or similar.
+
+#### `fs.list_files(folder [, pattern])`
+
+Every file under `folder`, recursed into every subfolder, whose name matches `pattern` (`*` and `?` wildcards; default `"*"`, so `"*.md"` finds every Markdown file). Returns absolute paths, or `nil, err` if `folder` isn't a folder. Dot-folders (`.git`, `.obsidian`, ...) and reparse points (symlinks/junctions, which could otherwise recurse forever) are skipped. Like a runaway `db:query` (see `sqlite` above), a folder large enough to take more than a few seconds to walk stops with `nil, err` instead of hanging the editor.
+
+#### `fs.read_text(path)`
+
+The whole file at `path`, decoded to UTF-8 from whatever encoding it was actually saved as - the same detection the editor itself uses to open a file. Returns the text, or `nil, err`.
+
+```lua
+for _, path in ipairs(assert(fs.list_files(folder, "*.md"))) do
+  local text = fs.read_text(path)
+  if text then
+    for target in text:gmatch("%[%[([^%]|]+)") do
+      ui.log(path .. " links to " .. target)
+    end
+  end
+end
+```
 
 ## Where commands appear
 
@@ -554,7 +577,7 @@ return {
 Plugins run in Lua 5.4, built into `tinkeredit.exe`. No separate Lua installation is needed.
 
 - **Available:** the basic functions (`pairs`, `ipairs`, `tostring`, `tonumber`, `pcall`, `error`, `assert`, `select`, `type`, `setmetatable`, and so on) and the `string`, `table`, `math`, `utf8`, and `coroutine` libraries.
-- **Not available:** `io`, `os`, `package`, `debug`, `dofile`, and `loadfile`. Plugins can't touch arbitrary files or run programs, with one deliberate exception: [`sqlite.open`](#sqlite) opens a real file on disk.
+- **Not available:** `io`, `os`, `package`, `debug`, `dofile`, and `loadfile`. Plugins can't touch arbitrary files or run programs, with two deliberate exceptions: [`sqlite.open`](#sqlite) opens a real file on disk, and [`fs.list_files`/`fs.read_text`](#fs) read a whole folder, read-only.
 - **Folder extension modules:** `require` works both during startup and later in that extension's commands/events. It reads Lua source only below the extension folder and caches each module privately. Single-file extensions cannot load other files.
 - **`load`** accepts Lua source text only, not precompiled chunks.
 - **`print`** writes nowhere visible. To see a value while developing a plugin, use `ui.message(tostring(value))`.

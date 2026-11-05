@@ -16,6 +16,7 @@ src/markdown_export.c
 src/docx_zip.c
 src/plugin_zip.c
 src/plugin_sqlite.c
+src/plugin_fs.c
 src/settings.c
 src/recent_list.c
 src/layout_metrics.c

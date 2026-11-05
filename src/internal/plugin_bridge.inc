@@ -907,6 +907,7 @@ static void reload_plugin_ui(HWND hwnd, const WCHAR *successMessage) {
     load_menus_and_plugins();
     refresh_theme(hwnd); /* themes.lua may have changed */
     refresh_menu(hwnd);
+    bind_toolbar_plugin_buttons(); /* plugin command indices may have moved */
     rebuild_main_accelerators();
     if (g_lastPluginLoadSucceeded && successMessage)
         show_plugin_reload_status(successMessage);

@@ -72,6 +72,7 @@ enum
     CTX_RENAME,
     CTX_DELETE,
     CTX_COPY_PATH,
+    CTX_COPY_WIKILINK,
     CTX_REVEAL,
     CTX_REFRESH,
     CTX_OPEN_PARENT
@@ -659,16 +660,16 @@ static void reload_loaded_directory(const WCHAR *path)
 
 /* ---- filesystem operations invoked from the context menu ---- */
 
-static void copy_path_to_clipboard(const WCHAR *path)
+static void copy_text_to_clipboard(const WCHAR *text)
 {
-    size_t bytes = (wcslen(path) + 1) * sizeof(WCHAR);
+    size_t bytes = (wcslen(text) + 1) * sizeof(WCHAR);
     HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE, bytes);
     if (!global)
         return;
     void *locked = GlobalLock(global);
     if (locked)
     {
-        memcpy(locked, path, bytes);
+        memcpy(locked, text, bytes);
         GlobalUnlock(global);
         if (OpenClipboard(s_hParent))
         {
@@ -680,6 +681,42 @@ static void copy_path_to_clipboard(const WCHAR *path)
         }
     }
     GlobalFree(global);
+}
+
+/* "C:\vault\sub\Note Name.md" -> "[[Note Name]]", matching how
+   plugins/wikilinks.lua's note_name_from_path() names a note: the file name
+   alone (no folder, no extension), since that's what it indexes and looks
+   up by. Caller frees. */
+static WCHAR *wikilink_text_for_path(const WCHAR *path)
+{
+    const WCHAR *lastBackslash = wcsrchr(path, L'\\');
+    const WCHAR *lastSlash = wcsrchr(path, L'/');
+    const WCHAR *lastSeparator = lastBackslash && lastSlash ? (lastBackslash > lastSlash ? lastBackslash : lastSlash)
+                                                             : (lastBackslash ? lastBackslash : lastSlash);
+    const WCHAR *nameStart = lastSeparator ? lastSeparator + 1 : path;
+    size_t nameLen = wcslen(nameStart);
+    const WCHAR *dot = wcsrchr(nameStart, L'.');
+    size_t baseLen = (dot && dot != nameStart) ? (size_t)(dot - nameStart) : nameLen;
+
+    WCHAR *result = (WCHAR *)malloc((baseLen + 5) * sizeof(WCHAR));
+    if (!result)
+        return NULL;
+    result[0] = L'[';
+    result[1] = L'[';
+    memcpy(result + 2, nameStart, baseLen * sizeof(WCHAR));
+    result[2 + baseLen] = L']';
+    result[3 + baseLen] = L']';
+    result[4 + baseLen] = L'\0';
+    return result;
+}
+
+static void copy_wikilink_to_clipboard(const WCHAR *path)
+{
+    WCHAR *text = wikilink_text_for_path(path);
+    if (!text)
+        return;
+    copy_text_to_clipboard(text);
+    free(text);
 }
 
 /* Explorer itself uses IFileOperation, and this app already runs STA COM on
@@ -1119,6 +1156,8 @@ static void show_context_menu(HTREEITEM item, POINT screenPt)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, CTX_COPY_PATH, L"Copy Path");
+        if (!data->isDirectory)
+            AppendMenuW(menu, MF_STRING, CTX_COPY_WIKILINK, L"Copy as Wikilink");
         AppendMenuW(menu, MF_STRING, CTX_REVEAL, L"Reveal in Explorer");
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
@@ -1177,7 +1216,11 @@ static void show_context_menu(HTREEITEM item, POINT screenPt)
         break;
     case CTX_COPY_PATH:
         if (data)
-            copy_path_to_clipboard(data->fullPath);
+            copy_text_to_clipboard(data->fullPath);
+        break;
+    case CTX_COPY_WIKILINK:
+        if (data && !data->isDirectory)
+            copy_wikilink_to_clipboard(data->fullPath);
         break;
     case CTX_REVEAL:
         if (data && s_revealPath)
@@ -1275,7 +1318,7 @@ int explorer_pretranslate_message(const MSG *message)
     if (control && !shift && !alt && message->wParam == 'C')
     {
         if (data)
-            copy_path_to_clipboard(data->fullPath);
+            copy_text_to_clipboard(data->fullPath);
         return 1;
     }
     return 0;

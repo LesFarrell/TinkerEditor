@@ -751,6 +751,13 @@ struct ToolbarButtonDef {
     WORD id;
     ToolbarIconPaintFn paint; /* NULL marks a separator (a small gap, no button) */
     const char *tip;
+    /* For a button backed by a plugin command instead of a built-in one
+       (e.g. wikilinks' "Open Link at Cursor"): the plugin command's menu
+       path, exactly as menu.add() registered it. `id` is ignored for these -
+       bind_toolbar_plugin_buttons() resolves the real, dynamically assigned
+       IDM_PLUGIN_COMMAND_0+index at toolbar creation and after every plugin
+       reload, since the index can move or the command can vanish. */
+    const char *pluginLabel;
 };
 static const struct ToolbarButtonDef TOOLBAR_BUTTONS[] = {
     { IDM_FMT_BOLD, toolbar_icon_bold, "Bold" },
@@ -774,6 +781,7 @@ static const struct ToolbarButtonDef TOOLBAR_BUTTONS[] = {
     { IDM_FMT_FOOTNOTE, toolbar_icon_footnote, "Insert footnote" },
     { IDM_FMT_HRULE, toolbar_icon_hrule, "Insert horizontal rule" },
     { IDM_FMT_ALERT, toolbar_icon_alert, "Insert alert" },
+    { 0, toolbar_icon_wikilink, "Open wikilink at cursor", "/Tools/Wikilinks/Open Link at Cursor" },
     { 0, NULL, NULL },
     { IDM_VIEW_TOGGLEPREVIEW, toolbar_icon_togglepreview, "Toggle preview" },
     { IDM_VIEW_PREVIEW_ON_LEFT, toolbar_icon_swappanels, "Swap panel sides" },
@@ -795,6 +803,28 @@ static void apply_toolbar_tooltip_theme(void) {
     if (!g_hToolbarTooltip) return;
     SendMessageW(g_hToolbarTooltip, TTM_SETTIPBKCOLOR, (WPARAM)theme_bg_color(), 0);
     SendMessageW(g_hToolbarTooltip, TTM_SETTIPTEXTCOLOR, (WPARAM)theme_fg_color(), 0);
+}
+
+/* Resolves TOOLBAR_BUTTONS[*].pluginLabel entries to the plugin command
+   currently registered under that menu path, and rebinds the button's
+   control id to it (plugin command indices are assigned at load time, so
+   IDM_PLUGIN_COMMAND_0+index can only be computed once plugins are loaded).
+   A button whose plugin isn't loaded, or doesn't register that command, is
+   disabled rather than removed - called once from create_toolbar() and
+   again after every plugin reload. */
+static void bind_toolbar_plugin_buttons(void) {
+    for (int i = 0; i < TOOLBAR_BUTTON_COUNT; i++) {
+        HWND hBtn = g_hToolbarButtons[i];
+        if (!hBtn || !TOOLBAR_BUTTONS[i].pluginLabel) continue;
+        int found = -1;
+        int count = plugin_host_command_count();
+        for (int c = 0; c < count; c++) {
+            const char *label = plugin_host_command_label(c);
+            if (label && strcmp(label, TOOLBAR_BUTTONS[i].pluginLabel) == 0) { found = c; break; }
+        }
+        if (found >= 0) SetWindowLongPtrW(hBtn, GWLP_ID, (LONG_PTR)(IDM_PLUGIN_COMMAND_0 + found));
+        EnableWindow(hBtn, found >= 0);
+    }
 }
 
 static void create_toolbar(HWND hwnd) {
@@ -832,6 +862,7 @@ static void create_toolbar(HWND hwnd) {
         }
         free(tip);
     }
+    bind_toolbar_plugin_buttons();
 }
 
 /* Paint one owner-drawn toolbar button: a flat/pressed frame around the

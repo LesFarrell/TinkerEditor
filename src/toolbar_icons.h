@@ -32,5 +32,6 @@ void toolbar_icon_terminal(HDC hdc, const RECT *rc, COLORREF fg);
 void toolbar_icon_footnote(HDC hdc, const RECT *rc, COLORREF fg);
 void toolbar_icon_hrule(HDC hdc, const RECT *rc, COLORREF fg);
 void toolbar_icon_alert(HDC hdc, const RECT *rc, COLORREF fg);
+void toolbar_icon_wikilink(HDC hdc, const RECT *rc, COLORREF fg);
 
 #endif

@@ -7,10 +7,12 @@
 
    sqlite.open(path) is a deliberate, explicit exception to "plugins can't
    touch arbitrary files" (plugins/README.md): it opens or creates a real
-   file at `path`, unlike every other plugin-facing API, including `zip`
-   (see plugin_zip.c), which only ever works on in-memory bytes. Keep it the
-   only such exception; this file's loader pattern should not be reused to
-   add more file access elsewhere.
+   file at `path`, unlike most plugin-facing APIs, including `zip` (see
+   plugin_zip.c), which only ever works on in-memory bytes. `fs.list_files`/
+   `fs.read_text` (plugin_fs.c) are the only other such exception, added for
+   read-only, whole-folder scans (a vault-wide link index, say); keep file
+   access to those two named, documented exceptions rather than growing a
+   general file API.
 
    A query's row-stepping loop runs entirely inside one C call, so the
    plugin time-limit hook (plugin_lua_runtime.c), which fires between Lua

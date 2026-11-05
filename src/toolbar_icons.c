@@ -399,3 +399,16 @@ void toolbar_icon_hrule(HDC hdc, const RECT *rc, COLORREF fg) {
 void toolbar_icon_alert(HDC hdc, const RECT *rc, COLORREF fg) {
     toolbar_icon_text(hdc, rc, fg, "!", 18);
 }
+
+/* The double-bracket wikilink syntax, mirroring toolbar_icon_code's "</>"
+   glyph approach for a plugin-defined command rather than a shape. */
+void toolbar_icon_wikilink(HDC hdc, const RECT *rc, COLORREF fg) {
+    HFONT font = CreateFontA(-(rc->bottom - rc->top) * 42 / 100, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FIXED_PITCH, "Consolas");
+    HFONT old = (HFONT)SelectObject(hdc, font);
+    SetTextColor(hdc, fg);
+    SetBkMode(hdc, TRANSPARENT);
+    DrawTextA(hdc, "[[ ]]", -1, (RECT *)rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, old);
+    DeleteObject(font);
+}

@@ -17,6 +17,7 @@
 #include "plugin_host_internal.h"
 
 #include "lua_editor_api.h"
+#include "plugin_fs.h"
 #include "plugin_sqlite.h"
 #include "plugin_zip.h"
 
@@ -242,6 +243,7 @@ static int open_environment(lua_State *L) {
     plugin_registry_open(L);
     plugin_zip_install(L); /* installs `zip`, or leaves it undefined - see plugin_zip.c */
     plugin_sqlite_install(L); /* installs `sqlite`, or leaves it undefined - see plugin_sqlite.c */
+    plugin_fs_install(L); /* installs `fs` (list_files/read_text) - see plugin_fs.c */
     lua_pushcfunction(L, plugin_require);
     lua_setglobal(L, "require");
     plugin_lua_install_hook(L);

@@ -377,6 +377,8 @@ static int fake_choose(const char *title, const char *label, const char *const *
     if (strcmp(label, "Include headings at:") == 0 && count == 4) return 1;
     if (strcmp(label, "Keep events at or above:") == 0 && count == 6) return 4;
     if ((strstr(label, "which key?") || strstr(label, "which table?")) && count >= 1) return 0;
+    if (strncmp(label, "Notes linking to ", 17) == 0 && count >= 1) return 0;
+    if (strcmp(label, "Open note:") == 0 && count >= 2) return 1;
     return strcmp(label, "Level:") == 0 && count == 3 && strcmp(items[1], "h2") == 0 ? 1 : -1;
 }
 
@@ -706,6 +708,75 @@ static void test_sqlite_api(HWND editor) {
 
     free(dbPathUtf8);
     DeleteFileW(dbPath);
+}
+
+/* Builds <tempRoot>\tinkeredit-fs-test\ with a couple of Markdown files, a
+   subfolder, a dot-folder (should be skipped), and a non-Markdown file
+   (should not match "*.md"), then exercises fs.list_files/fs.read_text
+   against it. */
+static void test_fs_api(HWND editor) {
+    WCHAR tempRoot[MAX_PATH], root[MAX_PATH], sub[MAX_PATH], hidden[MAX_PATH];
+    expect(GetTempPathW(MAX_PATH, tempRoot) > 0, "temp path available");
+    size_t rootLength = wcslen(tempRoot);
+    if (rootLength && tempRoot[rootLength - 1] == L'\\') tempRoot[rootLength - 1] = 0;
+    swprintf(root, MAX_PATH, L"%ls\\tinkeredit-fs-test", tempRoot);
+    swprintf(sub, MAX_PATH, L"%ls\\sub", root);
+    swprintf(hidden, MAX_PATH, L"%ls\\.hidden", root);
+    CreateDirectoryW(root, NULL);
+    CreateDirectoryW(sub, NULL);
+    CreateDirectoryW(hidden, NULL);
+
+    WCHAR note1[MAX_PATH], note2[MAX_PATH], note3[MAX_PATH], other[MAX_PATH];
+    swprintf(note1, MAX_PATH, L"%ls\\note1.md", root);
+    swprintf(note2, MAX_PATH, L"%ls\\note2.md", sub);
+    swprintf(note3, MAX_PATH, L"%ls\\note3.md", hidden);
+    swprintf(other, MAX_PATH, L"%ls\\note.txt", root);
+    write_bytes_file(note1, "Link to [[note2]].", strlen("Link to [[note2]]."));
+    write_bytes_file(note2, "Second note.", strlen("Second note."));
+    write_bytes_file(note3, "Should not be found.", strlen("Should not be found."));
+    write_bytes_file(other, "Not Markdown.", strlen("Not Markdown."));
+
+    char *rootUtf8 = to_utf8(root);
+    for (char *c = rootUtf8; *c; c++) if (*c == '\\') *c = '/';
+
+    char script[2048];
+    snprintf(script, sizeof(script),
+        "menu.add('List markdown files', function()\n"
+        "  local files = assert(fs.list_files('%s', '*.md'))\n"
+        "  assert(#files == 2, 'finds note1.md and sub/note2.md, not the hidden folder')\n"
+        "  local names = {}\n"
+        "  for _, path in ipairs(files) do names[path:match('[^/\\\\]+$')] = true end\n"
+        "  assert(names['note1.md'] and names['note2.md'])\n"
+        "end)\n"
+        "menu.add('Read a found file', function()\n"
+        "  local files = assert(fs.list_files('%s', 'note1.md'))\n"
+        "  assert(#files == 1)\n"
+        "  local text = assert(fs.read_text(files[1]))\n"
+        "  assert(text == 'Link to [[note2]].', text)\n"
+        "end)\n"
+        "menu.add('Not a folder', function()\n"
+        "  local files, err = fs.list_files('%s\\\\no-such-folder')\n"
+        "  assert(files == nil and err)\n"
+        "end)\n"
+        "menu.add('Missing file', function()\n"
+        "  local text, err = fs.read_text('%s\\\\no-such-file.md')\n"
+        "  assert(text == nil and err)\n"
+        "end)\n",
+        rootUtf8, rootUtf8, rootUtf8, rootUtf8);
+    int first = load_ok("fs.lua", script);
+    expect(run_ok(first, editor), "fs.list_files finds every matching file, skipping dot-folders");
+    expect(run_ok(first + 1, editor), "fs.read_text reads a file found by fs.list_files");
+    expect(run_ok(first + 2, editor), "fs.list_files reports nil, err for a path that isn't a folder");
+    expect(run_ok(first + 3, editor), "fs.read_text reports nil, err for a missing file");
+
+    free(rootUtf8);
+    DeleteFileW(note1);
+    DeleteFileW(note2);
+    DeleteFileW(note3);
+    DeleteFileW(other);
+    RemoveDirectoryW(hidden);
+    RemoveDirectoryW(sub);
+    RemoveDirectoryW(root);
 }
 
 static void test_ui(HWND editor) {
@@ -2737,6 +2808,108 @@ static void test_sqlite_browser(HWND editor) {
     plugin_host_shutdown();
 }
 
+static char s_documentOpened[512];
+
+static int fake_document_open(const char *path) {
+    snprintf(s_documentOpened, sizeof(s_documentOpened), "%s", path);
+    return 1;
+}
+
+static const char *s_wikiCurrentPath;
+
+static char *fake_wiki_file_path(void) {
+    if (!s_wikiCurrentPath) return NULL;
+    char *copy = (char *)malloc(strlen(s_wikiCurrentPath) + 1);
+    if (copy) strcpy(copy, s_wikiCurrentPath);
+    return copy;
+}
+
+/* Builds a two-note vault (note1.md links to note2.md twice, note2.md links
+   back to note1.md), rebuilds the wikilink index, and exercises Open Link
+   at Cursor, Show Backlinks, and Quick Switch to Note against it. */
+static void test_wikilinks(HWND editor) {
+    WCHAR tempRoot[MAX_PATH], vault[MAX_PATH], note1[MAX_PATH], note2[MAX_PATH], indexDb[MAX_PATH];
+    expect(GetTempPathW(MAX_PATH, tempRoot) > 0, "temp path available");
+    size_t rootLength = wcslen(tempRoot);
+    if (rootLength && tempRoot[rootLength - 1] == L'\\') tempRoot[rootLength - 1] = 0;
+    swprintf(vault, MAX_PATH, L"%ls\\tinkeredit-wiki-test", tempRoot);
+    CreateDirectoryW(vault, NULL);
+    swprintf(note1, MAX_PATH, L"%ls\\note1.md", vault);
+    swprintf(note2, MAX_PATH, L"%ls\\note2.md", vault);
+    swprintf(indexDb, MAX_PATH, L"%ls\\.tinkeredit-links.db", vault);
+    DeleteFileW(indexDb);
+
+    const char *note1Text = "See [[note2]] and [[note2|the second note]].";
+    const char *note2Text = "Back to [[note1]].";
+    write_bytes_file(note1, note1Text, strlen(note1Text));
+    write_bytes_file(note2, note2Text, strlen(note2Text));
+
+    char *vaultUtf8 = to_utf8(vault);
+    char *note1Utf8 = to_utf8(note1);
+    char *note2Utf8 = to_utf8(note2);
+    s_browserDbFolder = vaultUtf8;
+    s_documentOpened[0] = 0;
+    s_wikiCurrentPath = NULL;
+
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .choose = fake_choose, .pick_path = fake_pick_browser_path,
+        .config_get = fake_config_get, .config_set = fake_config_set,
+        .message = fake_message, .document_open = fake_document_open,
+        .file_path = fake_wiki_file_path
+    };
+    plugin_host_set_callbacks(&fakes);
+    s_configValue[0] = 0;
+
+    int sourceLength = 0;
+    char *source = read_bytes_file(L"plugins\\wikilinks.lua", &sourceLength);
+    expect(source != NULL, "plugins/wikilinks.lua is readable");
+    if (source) {
+        int first = load_ok("wikilinks.lua", source);
+        /* Registration order in the file: Choose Vault Folder, Rebuild Link
+           Index, Open Link at Cursor, Show Backlinks, Quick Switch. */
+        enum { CHOOSE_VAULT = 0, REBUILD = 1, OPEN_AT_CURSOR = 2, BACKLINKS = 3, QUICK_SWITCH = 4 };
+
+        expect(run_ok(first + CHOOSE_VAULT, editor) && strstr(s_lastMessage, "Vault folder set to"),
+               "Choose Vault Folder stores the picked folder");
+
+        expect(run_ok(first + REBUILD, editor) && strstr(s_lastMessage, "2 note(s) indexed") &&
+               strstr(s_lastMessage, "3 link(s) found"),
+               "Rebuild Link Index scans the vault and counts notes and links");
+
+        set_document(editor, "See [[note2]] here.");
+        SendMessageA(editor, SCI_SETSEL, 8, 8); /* caret inside "note2" */
+        expect(run_ok(first + OPEN_AT_CURSOR, editor) && strcmp(s_documentOpened, note2Utf8) == 0,
+               "Open Link at Cursor opens the note named at the caret");
+
+        s_documentOpened[0] = 0;
+        set_document(editor, "No link on this line.");
+        SendMessageA(editor, SCI_SETSEL, 5, 5);
+        expect(run_ok(first + OPEN_AT_CURSOR, editor) &&
+               strstr(s_lastMessage, "Place the caret inside a [[wikilink]]") && !s_documentOpened[0],
+               "Open Link at Cursor warns when the caret isn't inside a link");
+
+        s_wikiCurrentPath = note1Utf8;
+        s_documentOpened[0] = 0;
+        expect(run_ok(first + BACKLINKS, editor) && strcmp(s_documentOpened, note2Utf8) == 0,
+               "Show Backlinks opens the one note that links to the current note");
+        s_wikiCurrentPath = NULL;
+
+        s_documentOpened[0] = 0;
+        expect(run_ok(first + QUICK_SWITCH, editor) && s_documentOpened[0],
+               "Quick Switch to Note opens a note chosen from the whole index");
+    }
+    free(source);
+    free(vaultUtf8);
+    free(note1Utf8);
+    free(note2Utf8);
+    s_browserDbFolder = NULL;
+    DeleteFileW(note1);
+    DeleteFileW(note2);
+    DeleteFileW(indexDb);
+    RemoveDirectoryW(vault);
+    plugin_host_shutdown();
+}
+
 /* ---- a stand-in Windows dictionary, for spell and the anagram plugin ---- */
 static const char *const s_dictionary[] = {
     "listen", "silent", "enlist", "tinsel", "inlets", "dirty", "room", "dormitory", "the"
@@ -3043,6 +3216,8 @@ int main(void) {
     test_ui(editor);
     test_zip_api(editor);
     test_sqlite_api(editor);
+    test_fs_api(editor);
+    test_wikilinks(editor);
     test_deferred(editor);
     test_events(editor);
     test_load_failures();
