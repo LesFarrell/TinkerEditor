@@ -296,6 +296,7 @@ static const char *s_alignDelimiter = "=";
 static const char *s_calculatorExpression =
     "0x10 + 0b11 + (5 << 1) + min(4, 9)";
 static const char *s_z80EmulatorPath;
+static const char *s_manualSql;
 static const char *s_z80EmulatorArguments;
 
 static char *fake_config_get(const char *plugin, const char *key) {
@@ -355,6 +356,12 @@ static char *fake_prompt(const char *title, const char *label, const char *initi
     if (strcmp(label, "Table name:") == 0) {
         char *reply = (char *)malloc(7);
         if (reply) strcpy(reply, "people");
+        return reply;
+    }
+    if (strcmp(label, "SQL to run:") == 0) {
+        if (!s_manualSql) return NULL;
+        char *reply = (char *)malloc(strlen(s_manualSql) + 1);
+        if (reply) strcpy(reply, s_manualSql);
         return reply;
     }
     char *reply = (char *)malloc(strlen(label) + strlen(initial) + 16);
@@ -2596,9 +2603,10 @@ static void test_sqlite_browser(HWND editor) {
     if (source) {
         int first = load_ok("sqlite-browser.lua", source);
         /* Registration order in the file: Open Existing, Create New, Current
-           Database, Run SQL, Show Tables, Describe Table, Import Markdown. */
+           Database, Run SQL, Run SQL (Enter Manually), Show Tables, Describe
+           Table, Import Markdown. */
         enum { BROWSER_OPEN_EXISTING = 0, BROWSER_CREATE_NEW = 1, BROWSER_CURRENT = 2, BROWSER_RUN_SQL = 3,
-               BROWSER_SHOW_TABLES = 4, BROWSER_DESCRIBE = 5, BROWSER_IMPORT = 6 };
+               BROWSER_RUN_SQL_MANUAL = 4, BROWSER_SHOW_TABLES = 5, BROWSER_DESCRIBE = 6, BROWSER_IMPORT = 7 };
 
         set_document(editor, "");
         expect(run_ok(first + BROWSER_RUN_SQL, editor) && strstr(s_lastMessage, "Open or create a database"),
@@ -2630,6 +2638,14 @@ static void test_sqlite_browser(HWND editor) {
         s_outputText[0] = 0;
         expect(run_ok(first + BROWSER_RUN_SQL, editor) && strstr(s_outputText, "2 row(s) affected."),
                "Run SQL reports rows affected for a non-query statement");
+
+        set_document(editor, "");
+        s_manualSql = "select name, age from staff order by name;";
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL_MANUAL, editor) &&
+               strstr(s_outputText, "| Ada | 37 |") && strstr(s_outputText, "| Grace | 86 |"),
+               "Run SQL (Enter Manually) runs SQL typed into the prompt, ignoring the document");
+        s_manualSql = NULL;
 
         s_outputText[0] = 0;
         expect(run_ok(first + BROWSER_SHOW_TABLES, editor) && strstr(s_outputText, "staff"),

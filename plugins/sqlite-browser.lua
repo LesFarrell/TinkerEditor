@@ -183,6 +183,24 @@ local function run_sql(db, sql)
   return { kind = "changed", changed = totalChanged + changed }
 end
 
+local function report_sql_result(db, sql)
+  local result, err = run_sql(db, sql)
+  if not result then
+    ui.message("SQL failed: " .. tostring(err), "SQLite Browser", "error")
+    return
+  end
+  if result.kind == "rows" then
+    if #result.columns == 0 then
+      output.report("SQLite Browser", "The query ran successfully and returned no columns.")
+    else
+      output.report("SQLite Browser",
+        render_markdown_table(result.columns, result.rows) .. "\n\n" .. #result.rows .. " row(s).")
+    end
+  else
+    output.report("SQLite Browser", result.changed .. " row(s) affected.")
+  end
+end
+
 menu.add("/Tools/SQLite Browser/Run SQL", function()
   with_db(function(db)
     local sql = source_text()
@@ -190,21 +208,15 @@ menu.add("/Tools/SQLite Browser/Run SQL", function()
       ui.message("Select some SQL to run, or write it in the document.", "SQLite Browser", "warning")
       return
     end
-    local result, err = run_sql(db, sql)
-    if not result then
-      ui.message("SQL failed: " .. tostring(err), "SQLite Browser", "error")
-      return
-    end
-    if result.kind == "rows" then
-      if #result.columns == 0 then
-        output.report("SQLite Browser", "The query ran successfully and returned no columns.")
-      else
-        output.report("SQLite Browser",
-          render_markdown_table(result.columns, result.rows) .. "\n\n" .. #result.rows .. " row(s).")
-      end
-    else
-      output.report("SQLite Browser", result.changed .. " row(s) affected.")
-    end
+    report_sql_result(db, sql)
+  end)
+end)
+
+menu.add("/Tools/SQLite Browser/Run SQL (Enter Manually)...", function()
+  with_db(function(db)
+    local sql = ui.prompt("SQL to run:", "", "SQLite Browser")
+    if not sql or not sql:match("%S") then return end
+    report_sql_result(db, sql)
   end)
 end)
 
