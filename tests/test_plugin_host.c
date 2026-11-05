@@ -631,6 +631,62 @@ static void test_zip_api(HWND editor) {
     expect(run_ok(first + 3, editor), "zip.unpack reports an error instead of crashing on non-zip input");
 }
 
+/* sqlite.open() really does touch disk (plugin_sqlite.c's one deliberate
+   exception to the sandbox); back it with a real temp file rather than
+   stubbing anything. */
+static void test_sqlite_api(HWND editor) {
+    WCHAR tempRoot[MAX_PATH], dbPath[MAX_PATH];
+    expect(GetTempPathW(MAX_PATH, tempRoot) > 0, "temp path available");
+    expect(GetTempFileNameW(tempRoot, L"sql", 0, dbPath) != 0, "temp db name reserved");
+    DeleteFileW(dbPath); /* sqlite.open() should create it fresh */
+    char *dbPathUtf8 = to_utf8(dbPath);
+    for (char *c = dbPathUtf8; *c; c++)
+        if (*c == '\\') *c = '/'; /* avoids escaping backslashes in the Lua literal below */
+
+    char script[4096];
+    snprintf(script, sizeof(script),
+        "menu.add('Round trip', function()\n"
+        "  local db, err = sqlite.open('%s')\n"
+        "  assert(db and not err, err)\n"
+        "  assert(db:exec('create table notes (id integer primary key, text text)'))\n"
+        "  local ok, changed = db:exec('insert into notes (text) values (?)', 'hello')\n"
+        "  assert(ok and changed == 1, 'one row changed')\n"
+        "  db:exec('insert into notes (text) values (?)', 'world')\n"
+        "  local rows, qerr = db:query('select id, text from notes order by id')\n"
+        "  assert(rows and not qerr, qerr)\n"
+        "  assert(#rows == 2)\n"
+        "  assert(rows[1].id == 1 and rows[1].text == 'hello')\n"
+        "  assert(rows[2].id == 2 and rows[2].text == 'world')\n"
+        "  db:close()\n"
+        "end)\n"
+        "menu.add('Reopens persisted data', function()\n"
+        "  local db = assert(sqlite.open('%s'))\n"
+        "  local rows = assert(db:query('select count(*) as n from notes'))\n"
+        "  assert(rows[1].n == 2, 'data survived close/reopen')\n"
+        "  db:close()\n"
+        "end)\n"
+        "menu.add('Closed database errors', function()\n"
+        "  local db = assert(sqlite.open('%s'))\n"
+        "  db:close()\n"
+        "  assert(not pcall(function() db:exec('select 1') end))\n"
+        "end)\n"
+        "menu.add('Query error is reported, not raised', function()\n"
+        "  local db = assert(sqlite.open('%s'))\n"
+        "  local rows, err = db:query('select * from no_such_table')\n"
+        "  assert(rows == nil and err)\n"
+        "  db:close()\n"
+        "end)\n",
+        dbPathUtf8, dbPathUtf8, dbPathUtf8, dbPathUtf8);
+    int first = load_ok("sqlite.lua", script);
+    expect(run_ok(first, editor), "sqlite.open/exec/query round-trip a real database file");
+    expect(run_ok(first + 1, editor), "data written by one connection is visible after reopening");
+    expect(run_ok(first + 2, editor), "a method on a closed database raises an error");
+    expect(run_ok(first + 3, editor), "a failing query returns nil, err instead of raising");
+
+    free(dbPathUtf8);
+    DeleteFileW(dbPath);
+}
+
 static void test_ui(HWND editor) {
     int first = load_ok("ui.lua",
         "menu.add('Ask', function()\n"
@@ -2683,6 +2739,7 @@ int main(void) {
     test_checkboxes_and_config(editor);
     test_ui(editor);
     test_zip_api(editor);
+    test_sqlite_api(editor);
     test_deferred(editor);
     test_events(editor);
     test_load_failures();

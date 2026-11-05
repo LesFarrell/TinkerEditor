@@ -3,6 +3,7 @@ src/plugin_lua_runtime.c
 src/plugin_registry.c
 src/plugin_discovery.c
 src/plugin_zip.c
+src/plugin_sqlite.c
 src/lua_editor_api.c
 src/file_io.c
 src/text_codec.c

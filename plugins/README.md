@@ -2,7 +2,7 @@
 
 A Tinker Editor plugin is a Lua script that adds commands, menus, and automatic actions to the editor. Plugins can read and change the document, ask simple questions, and show messages. They can't access arbitrary files, start programs, or reach the network. A folder extension can load its own Lua modules through the restricted `require` function.
 
-This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, and developer-oriented extensions.
+This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes, and developer-oriented extensions.
 
 Paths below use `%APPDATA%\tinkeredit`; in portable mode use `portable-data` beside `tinkeredit.exe` instead.
 
@@ -52,7 +52,7 @@ Functions that take a position, range, or line number raise an error when it's o
 
 ## API reference
 
-Plugins see the `menu`, `contextmenu`, `commands`, `events`, `editor`, `documents`, `ui`, `config`, `app`, `spell`, and `output` tables. Square brackets mark optional arguments.
+Plugins see the `menu`, `contextmenu`, `commands`, `events`, `editor`, `documents`, `ui`, `config`, `app`, `spell`, `output`, `zip`, and (where available) `sqlite` tables. Square brackets mark optional arguments.
 
 Names, labels, menu paths, and dialog text must be valid UTF-8 and cannot contain NUL bytes. Document text passed through `editor.*` is length-counted separately, so those functions preserve every byte in the document.
 
@@ -391,6 +391,38 @@ for _, entry in ipairs(entries) do
 end
 ```
 
+### sqlite
+
+The one deliberate exception to "plugins can't touch arbitrary files": `sqlite.open(path)` opens or creates a real SQLite database file at `path`, backed by `winsqlite3.dll`, the SQLite build Windows 10/11 already ships for its own apps - no extra install, no bundled library. Use it for structured data a plugin wants to keep, query, or sort, such as a personal log or notes database. `sqlite` is undefined on a system without `winsqlite3.dll` (older Windows), so check `sqlite ~= nil` before relying on it, or let the resulting error surface.
+
+#### `sqlite.open(path)`
+
+Returns a database object, or `nil, err` on failure. The file is created if it doesn't exist.
+
+#### `db:exec(sql [, ...])`
+
+Runs one statement (DDL, insert/update/delete, or even a `select` whose rows aren't needed). `...` are bound in order to `?` placeholders in `sql`; each must be `nil`, a boolean, a number, or a string. Returns `true, rows_changed`, or `nil, err`.
+
+#### `db:query(sql [, ...])`
+
+Runs a `select` the same way and returns an array of row tables (column name to value), or `nil, err`. A SQL `NULL` is simply absent from the row table.
+
+#### `db:close()`
+
+Closes the database. A database still open when its Lua value is garbage-collected, or when `local db <close> = sqlite.open(...)` goes out of scope, closes automatically either way.
+
+```lua
+local db = assert(sqlite.open(app.workspace_path() .. "\\notes.db"))
+assert(db:exec("create table if not exists notes (id integer primary key, text text)"))
+assert(db:exec("insert into notes (text) values (?)", "Remember to write docs"))
+for _, row in ipairs(assert(db:query("select id, text from notes order by id"))) do
+  ui.log(row.id .. ": " .. row.text)
+end
+db:close()
+```
+
+[`sqlite-notes.lua`](sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API.
+
 ## Where commands appear
 
 A command's label is a path separated by `/`. Each part before the last names a submenu; the last part is the item. An `&` before a letter marks it as the item's access key (`&&` shows a literal `&`).
@@ -521,7 +553,7 @@ return {
 Plugins run in Lua 5.4, built into `tinkeredit.exe`. No separate Lua installation is needed.
 
 - **Available:** the basic functions (`pairs`, `ipairs`, `tostring`, `tonumber`, `pcall`, `error`, `assert`, `select`, `type`, `setmetatable`, and so on) and the `string`, `table`, `math`, `utf8`, and `coroutine` libraries.
-- **Not available:** `io`, `os`, `package`, `debug`, `dofile`, and `loadfile`. Plugins can't touch arbitrary files or run programs.
+- **Not available:** `io`, `os`, `package`, `debug`, `dofile`, and `loadfile`. Plugins can't touch arbitrary files or run programs, with one deliberate exception: [`sqlite.open`](#sqlite) opens a real file on disk.
 - **Folder extension modules:** `require` works both during startup and later in that extension's commands/events. It reads Lua source only below the extension folder and caches each module privately. Single-file extensions cannot load other files.
 - **`load`** accepts Lua source text only, not precompiled chunks.
 - **`print`** writes nowhere visible. To see a value while developing a plugin, use `ui.message(tostring(value))`.
