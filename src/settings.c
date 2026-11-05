@@ -226,6 +226,10 @@ void load_layout_settings(void) {
 void save_layout_settings(void) {
     WCHAR *path = get_settings_path();
     if (!path) return;
+    /* This writes ~35 individual settings; without batching, each one would
+       do its own full JSON load+save (see plugin_settings_set()), which on a
+       slow disk made this measurably the slowest part of shutting down. */
+    plugin_settings_begin_batch(path);
     write_profile_int(L"View", L"PreviewOnLeft", g_previewOnLeft, path);
     write_profile_int(L"View", L"FocusMode", g_focusMode, path);
     write_profile_int(L"View", L"WordWrap", g_wordWrap, path);
@@ -302,6 +306,7 @@ void save_layout_settings(void) {
         write_profile_int(L"Window", L"Height", normal.bottom - normal.top, path);
         write_profile_int(L"Window", L"Maximized", maximized, path);
     }
+    plugin_settings_end_batch();
     free(path);
 }
 

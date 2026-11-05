@@ -302,6 +302,32 @@ static int save_settings(const WCHAR *path, SettingEntry *entries) {
     return ok;
 }
 
+/* Open batch, or NULL. plugin_settings_set() checks this before touching
+   disk; plugin_settings_get()/plugin_settings_clear_section() ignore it and
+   always read the file directly, so they still see a batch's pending writes
+   only once it's been committed. */
+static WCHAR *s_batchPath;
+static SettingEntry *s_batchEntries;
+static int s_batchValid;
+
+void plugin_settings_begin_batch(const WCHAR *path) {
+    if (s_batchPath) plugin_settings_end_batch();
+    if (!path) return;
+    s_batchPath = _wcsdup(path);
+    if (!s_batchPath) return;
+    s_batchEntries = load_settings(s_batchPath, &s_batchValid);
+}
+
+void plugin_settings_end_batch(void) {
+    if (!s_batchPath) return;
+    if (s_batchValid) save_settings(s_batchPath, s_batchEntries);
+    free_entries(s_batchEntries);
+    s_batchEntries = NULL;
+    free(s_batchPath);
+    s_batchPath = NULL;
+    s_batchValid = 0;
+}
+
 char *plugin_settings_get(const WCHAR *path, const char *plugin, const char *key) {
     if (!path || !plugin || !key) return NULL;
     int valid = 0;
@@ -313,18 +339,13 @@ char *plugin_settings_get(const WCHAR *path, const char *plugin, const char *key
     return value;
 }
 
-int plugin_settings_set(const WCHAR *path, const char *plugin, const char *key,
-                        const char *value) {
-    if (!path || !plugin || !key) return 0;
-    int valid = 0, count = 0;
-    SettingEntry *entries = load_settings(path, &valid);
-    if (!valid) return 0;
-    for (SettingEntry *entry = entries; entry; entry = entry->next) count++;
+static int apply_setting(SettingEntry **entries, const char *plugin, const char *key,
+                         const char *value, int *count) {
     int ok = 1;
     if (value) {
-        ok = put_entry(&entries, plugin, key, value, &count);
+        ok = put_entry(entries, plugin, key, value, count);
     } else {
-        SettingEntry **link = &entries;
+        SettingEntry **link = entries;
         while (*link && (strcmp((*link)->plugin, plugin) != 0 || strcmp((*link)->key, key) != 0))
             link = &(*link)->next;
         if (*link) {
@@ -334,6 +355,23 @@ int plugin_settings_set(const WCHAR *path, const char *plugin, const char *key,
             free_entries(removed);
         }
     }
+    return ok;
+}
+
+int plugin_settings_set(const WCHAR *path, const char *plugin, const char *key,
+                        const char *value) {
+    if (!path || !plugin || !key) return 0;
+    if (s_batchPath && wcscmp(path, s_batchPath) == 0) {
+        if (!s_batchValid) return 0;
+        int count = 0;
+        for (SettingEntry *entry = s_batchEntries; entry; entry = entry->next) count++;
+        return apply_setting(&s_batchEntries, plugin, key, value, &count);
+    }
+    int valid = 0, count = 0;
+    SettingEntry *entries = load_settings(path, &valid);
+    if (!valid) return 0;
+    for (SettingEntry *entry = entries; entry; entry = entry->next) count++;
+    int ok = apply_setting(&entries, plugin, key, value, &count);
     if (ok) ok = save_settings(path, entries);
     free_entries(entries);
     return ok;

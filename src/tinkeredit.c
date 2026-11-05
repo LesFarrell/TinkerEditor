@@ -685,7 +685,10 @@ static void initialize_main_window(HWND hwnd) {
 
     explorer_init(hwnd, explorer_request_open, show_text_input, reveal_path_in_explorer,
                   explorer_path_renamed, explorer_request_change_root);
-    if (g_explorerVisible && g_currentWorkspaceFolder) explorer_set_root(g_currentWorkspaceFolder);
+    /* Populating the tree (explorer_set_root(), in run_deferred_startup_init)
+       waits until the window is already shown - walking the workspace folder
+       is one of the more expensive steps here and the window doesn't need it
+       to be usable. */
 
     create_document_tabs(hwnd, dpi);
     create_output_panel(hwnd); /* before the editor views, which apply the font to it */
@@ -716,6 +719,7 @@ static void initialize_main_window(HWND hwnd) {
    after the window is already shown - rather than stretching out the
    startup wait cursor while nothing is on screen yet. */
 static void run_deferred_startup_init(void) {
+    if (g_explorerVisible && g_currentWorkspaceFolder) explorer_set_root(g_currentWorkspaceFolder);
     detect_high_contrast();
     if (g_comInitialized) init_spell_checker();
     /* The menu was built before the spell checker existed. */
