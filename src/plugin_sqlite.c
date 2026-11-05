@@ -223,10 +223,21 @@ static void push_column_value(lua_State *L, sqlite3_stmt *stmt, int column) {
     }
 }
 
+static void free_column_names(char **names, int count) {
+    if (!names) return;
+    for (int i = 0; i < count; i++) free(names[i]);
+    free(names);
+}
+
 /* db:exec(sql [, ...]) and db:query(sql [, ...]) share everything but what
    happens to the rows sqlite produces. db:exec("select ...") works too - it
    just throws the rows away and reports how many rows the statement
-   touched instead, same as a plain insert/update/delete. */
+   touched instead, same as a plain insert/update/delete.
+
+   db:query's rows are plain Lua tables (column name -> value), and a table
+   has no reliable iteration order, so a caller that needs the statement's
+   declared column order (to render a table, say) can't recover it from a
+   row alone - db:query's second return is that ordered column-name list. */
 static int db_run(lua_State *L, int collectRows) {
     sqlite3 **handle = check_db(L, 1);
     if (!*handle) return luaL_error(L, "the database is closed");
@@ -253,6 +264,18 @@ static int db_run(lua_State *L, int collectRows) {
         lua_pushstring(L, bindError);
         return 2;
     }
+
+    /* Column names and count are known as soon as the statement is
+       prepared, independent of how many rows (if any) it produces. */
+    int columnCount = collectRows ? s_column_count(stmt) : 0;
+    char **columnNames = NULL;
+    if (columnCount > 0) {
+        columnNames = (char **)calloc((size_t)columnCount, sizeof(char *));
+        if (columnNames)
+            for (int column = 0; column < columnCount; column++)
+                columnNames[column] = to_utf8((const WCHAR *)s_column_name16(stmt, column));
+    }
+
     if (collectRows) lua_newtable(L);
     ULONGLONG started = GetTickCount64();
     int rowCount = 0;
@@ -260,22 +283,17 @@ static int db_run(lua_State *L, int collectRows) {
         rc = s_step(stmt);
         if (rc != SQLITE_ROW) break;
         if (collectRows) {
-            int columnCount = s_column_count(stmt);
             lua_createtable(L, 0, columnCount);
             for (int column = 0; column < columnCount; column++) {
-                char *name = to_utf8((const WCHAR *)s_column_name16(stmt, column));
                 push_column_value(L, stmt, column);
-                if (name) {
-                    lua_setfield(L, -2, name);
-                    free(name);
-                } else {
-                    lua_pop(L, 1);
-                }
+                if (columnNames && columnNames[column]) lua_setfield(L, -2, columnNames[column]);
+                else lua_pop(L, 1);
             }
             lua_seti(L, -2, ++rowCount);
         }
         if (GetTickCount64() - started > PLUGIN_TIME_LIMIT_MS) {
             s_finalize(stmt);
+            free_column_names(columnNames, columnCount);
             return luaL_error(L, "stopped after %d seconds without finishing", PLUGIN_TIME_LIMIT_MS / 1000);
         }
     }
@@ -285,12 +303,22 @@ static int db_run(lua_State *L, int collectRows) {
         const char *message = lua_tostring(L, -1);
         lua_pop(L, 1);
         s_finalize(stmt);
+        free_column_names(columnNames, columnCount);
         lua_pushnil(L);
         lua_pushstring(L, message ? message : "the statement failed");
         return 2;
     }
     s_finalize(stmt);
-    if (collectRows) return 1;
+    if (collectRows) {
+        lua_newtable(L);
+        for (int column = 0; column < columnCount; column++) {
+            if (columnNames && columnNames[column]) lua_pushstring(L, columnNames[column]);
+            else lua_pushnil(L);
+            lua_seti(L, -2, column + 1);
+        }
+        free_column_names(columnNames, columnCount);
+        return 2; /* rows, columns */
+    }
     lua_pushboolean(L, 1);
     lua_pushinteger(L, s_changes(*handle));
     return 2;

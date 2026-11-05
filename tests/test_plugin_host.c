@@ -347,6 +347,16 @@ static char *fake_prompt(const char *title, const char *label, const char *initi
         if (reply) strcpy(reply, s_calculatorExpression);
         return reply;
     }
+    if (strcmp(label, "New database file name:") == 0) {
+        char *reply = (char *)malloc(16);
+        if (reply) strcpy(reply, "test-browser.db");
+        return reply;
+    }
+    if (strcmp(label, "Table name:") == 0) {
+        char *reply = (char *)malloc(7);
+        if (reply) strcpy(reply, "people");
+        return reply;
+    }
     char *reply = (char *)malloc(strlen(label) + strlen(initial) + 16);
     if (reply) sprintf(reply, "reply to %s %s", label, initial);
     return reply;
@@ -358,6 +368,7 @@ static int fake_choose(const char *title, const char *label, const char *const *
         return 0;
     if (strcmp(label, "Include headings at:") == 0 && count == 4) return 1;
     if (strcmp(label, "Keep events at or above:") == 0 && count == 6) return 4;
+    if ((strstr(label, "which key?") || strstr(label, "which table?")) && count >= 1) return 0;
     return strcmp(label, "Level:") == 0 && count == 3 && strcmp(items[1], "h2") == 0 ? 1 : -1;
 }
 
@@ -652,8 +663,10 @@ static void test_sqlite_api(HWND editor) {
         "  local ok, changed = db:exec('insert into notes (text) values (?)', 'hello')\n"
         "  assert(ok and changed == 1, 'one row changed')\n"
         "  db:exec('insert into notes (text) values (?)', 'world')\n"
-        "  local rows, qerr = db:query('select id, text from notes order by id')\n"
-        "  assert(rows and not qerr, qerr)\n"
+        "  local rows, columns = db:query('select id, text from notes order by id')\n"
+        "  assert(rows and columns, 'query returns rows and column names')\n"
+        "  assert(#columns == 2 and columns[1] == 'id' and columns[2] == 'text',"
+        " 'columns come back in declared order')\n"
         "  assert(#rows == 2)\n"
         "  assert(rows[1].id == 1 and rows[1].text == 'hello')\n"
         "  assert(rows[2].id == 2 and rows[2].text == 'world')\n"
@@ -2434,6 +2447,229 @@ static void test_bundled_plugins(HWND editor) {
            "documents.auto_reload reads and sets the setting, for the active or a given document");
 }
 
+static char *s_jsonYamlDbFolder;
+
+static char *fake_pick_db_folder(const char *title, int folder) {
+    (void)title; (void)folder;
+    if (!s_jsonYamlDbFolder) return NULL;
+    size_t length = strlen(s_jsonYamlDbFolder) + 1;
+    char *copy = (char *)malloc(length);
+    if (copy) memcpy(copy, s_jsonYamlDbFolder, length);
+    return copy;
+}
+
+/* json-store.lua and yaml-store.lua each carry a hand-written codec with no
+   other test coverage, since they're ordinary bundled plugins rather than C
+   code. Exercise their actual commands end to end - decode a selection,
+   save it to a real sqlite file, read it back, re-encode it - rather than
+   trusting that plugin_host_load_directory() merely loading them without
+   error (test_bundled_plugins, above) says anything about whether they
+   work. */
+static void test_json_yaml_store(HWND editor) {
+    WCHAR tempRoot[MAX_PATH];
+    expect(GetTempPathW(MAX_PATH, tempRoot) > 0, "temp path available");
+    size_t rootLength = wcslen(tempRoot);
+    if (rootLength && tempRoot[rootLength - 1] == L'\\') tempRoot[rootLength - 1] = 0;
+    char *folderUtf8 = to_utf8(tempRoot);
+    s_jsonYamlDbFolder = folderUtf8;
+
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .choose = fake_choose, .pick_path = fake_pick_db_folder,
+        .config_get = fake_config_get, .config_set = fake_config_set,
+        .output_write = fake_output_write, .output_show = fake_output_show,
+        .message = fake_message
+    };
+    plugin_host_set_callbacks(&fakes);
+    s_configValue[0] = 0; /* force each plugin's first call to pick a fresh folder */
+
+    int jsonLength = 0, yamlLength = 0;
+    char *jsonSource = read_bytes_file(L"plugins\\json-store.lua", &jsonLength);
+    expect(jsonSource != NULL, "plugins/json-store.lua is readable");
+    char *yamlSource = read_bytes_file(L"plugins\\yaml-store.lua", &yamlLength);
+    expect(yamlSource != NULL, "plugins/yaml-store.lua is readable");
+
+    if (jsonSource && yamlSource) {
+        int json = load_ok("json-store.lua", jsonSource);
+        int yaml = load_ok("yaml-store.lua", yamlSource);
+        /* Registration order in each file: Save, Insert, View, List, Delete, Choose. */
+        enum { SAVE = 0, INSERT = 1, VIEW = 2 };
+
+        set_document(editor, "{\"name\": \"Ada\", \"tags\": [\"x\", \"y\"], \"active\": true, \"count\": 3}");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        expect(run_ok(json + SAVE, editor), "JSON Store saves a decoded, validated selection");
+        s_outputText[0] = 0;
+        expect(run_ok(json + VIEW, editor) && strstr(s_outputText, "\"active\": true") &&
+               strstr(s_outputText, "\"count\": 3") && strstr(s_outputText, "\"name\": \"Ada\"") &&
+               strstr(s_outputText, "\"x\"") && strstr(s_outputText, "\"y\""),
+               "JSON Store round-trips an object through sqlite");
+        set_document(editor, "");
+        expect(run_ok(json + INSERT, editor), "JSON Store inserts the stored value back as pretty JSON");
+        char *insertedJson = document_text(editor);
+        expect(insertedJson && strstr(insertedJson, "\"name\": \"Ada\"") && strstr(insertedJson, "true"),
+               "the inserted JSON matches what was saved");
+        free(insertedJson);
+
+        s_lastMessage[0] = 0;
+        set_document(editor, "not json at all {");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        expect(run_ok(json + SAVE, editor) && strstr(s_lastMessage, "isn't valid JSON"),
+               "JSON Store reports a syntax error instead of saving garbage");
+
+        set_document(editor, "name: Ada\ntags:\n  - x\n  - y\nactive: true\ncount: 3\n");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        expect(run_ok(yaml + SAVE, editor), "YAML Store saves a decoded, validated selection");
+        s_outputText[0] = 0;
+        expect(run_ok(yaml + VIEW, editor) && strstr(s_outputText, "\"active\": true") &&
+               strstr(s_outputText, "\"count\": 3") && strstr(s_outputText, "\"name\": \"Ada\"") &&
+               strstr(s_outputText, "- \"x\"") && strstr(s_outputText, "- \"y\""),
+               "YAML Store round-trips a mapping through sqlite");
+        set_document(editor, "");
+        expect(run_ok(yaml + INSERT, editor), "YAML Store inserts the stored value back as YAML");
+        char *insertedYaml = document_text(editor);
+        expect(insertedYaml && strstr(insertedYaml, "\"name\": \"Ada\"") && strstr(insertedYaml, "- \"x\""),
+               "the inserted YAML matches what was saved");
+        free(insertedYaml);
+
+        s_lastMessage[0] = 0;
+        set_document(editor, "key: [unterminated");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        expect(run_ok(yaml + SAVE, editor) && strstr(s_lastMessage, "isn't valid YAML"),
+               "YAML Store reports a syntax error instead of saving garbage");
+    }
+    free(jsonSource);
+    free(yamlSource);
+
+    WCHAR dbFile[MAX_PATH];
+    swprintf(dbFile, MAX_PATH, L"%ls\\tinkeredit-json-store.db", tempRoot);
+    DeleteFileW(dbFile);
+    swprintf(dbFile, MAX_PATH, L"%ls\\tinkeredit-yaml-store.db", tempRoot);
+    DeleteFileW(dbFile);
+    free(folderUtf8);
+    s_jsonYamlDbFolder = NULL;
+    plugin_host_shutdown();
+}
+
+static char *s_browserDbFolder, *s_browserDbPath;
+
+/* ui.pick_folder (folder = 1) and ui.pick_file (folder = 0) both reach this,
+   since sqlite-browser.lua's "Create New Database..." uses the former and
+   "Open Existing Database..." the latter. */
+static char *fake_pick_browser_path(const char *title, int folder) {
+    (void)title;
+    const char *source = folder ? s_browserDbFolder : s_browserDbPath;
+    if (!source) return NULL;
+    size_t length = strlen(source) + 1;
+    char *copy = (char *)malloc(length);
+    if (copy) memcpy(copy, source, length);
+    return copy;
+}
+
+/* sqlite-browser.lua carries its own Markdown-table renderer, SQL statement
+   splitter, and Markdown-table parser, none of which are covered anywhere
+   else - exercise its actual commands: create a database, run a multi-
+   statement script, read the result back as a Markdown table, describe the
+   table, and import a Markdown table into a new one. */
+static void test_sqlite_browser(HWND editor) {
+    WCHAR tempRoot[MAX_PATH], dbPath[MAX_PATH];
+    expect(GetTempPathW(MAX_PATH, tempRoot) > 0, "temp path available");
+    size_t rootLength = wcslen(tempRoot);
+    if (rootLength && tempRoot[rootLength - 1] == L'\\') tempRoot[rootLength - 1] = 0;
+    swprintf(dbPath, MAX_PATH, L"%ls\\test-browser.db", tempRoot);
+    DeleteFileW(dbPath);
+    char *folderUtf8 = to_utf8(tempRoot);
+    char *dbPathUtf8 = to_utf8(dbPath);
+    s_browserDbFolder = folderUtf8;
+    s_browserDbPath = dbPathUtf8;
+
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .choose = fake_choose, .pick_path = fake_pick_browser_path,
+        .config_get = fake_config_get, .config_set = fake_config_set,
+        .output_write = fake_output_write, .output_show = fake_output_show,
+        .message = fake_message
+    };
+    plugin_host_set_callbacks(&fakes);
+    s_configValue[0] = 0; /* force a fresh "no database open yet" state */
+
+    int sourceLength = 0;
+    char *source = read_bytes_file(L"plugins\\sqlite-browser.lua", &sourceLength);
+    expect(source != NULL, "plugins/sqlite-browser.lua is readable");
+    if (source) {
+        int first = load_ok("sqlite-browser.lua", source);
+        /* Registration order in the file: Open Existing, Create New, Current
+           Database, Run SQL, Show Tables, Describe Table, Import Markdown. */
+        enum { BROWSER_OPEN_EXISTING = 0, BROWSER_CREATE_NEW = 1, BROWSER_CURRENT = 2, BROWSER_RUN_SQL = 3,
+               BROWSER_SHOW_TABLES = 4, BROWSER_DESCRIBE = 5, BROWSER_IMPORT = 6 };
+
+        set_document(editor, "");
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) && strstr(s_lastMessage, "Open or create a database"),
+               "Run SQL asks for a database before one is open");
+
+        expect(run_ok(first + BROWSER_CREATE_NEW, editor) && strstr(s_lastMessage, "Created"),
+               "Create New Database creates and selects a database file");
+
+        s_configValue[0] = 0; /* forget the database Create New just selected */
+        expect(run_ok(first + BROWSER_OPEN_EXISTING, editor) && strstr(s_lastMessage, "Opened"),
+               "Open Existing Database reopens the same file by path");
+
+        set_document(editor,
+            "create table staff (id integer primary key, name text, age integer);\n"
+            "insert into staff (name, age) values ('Ada', 36);\n"
+            "insert into staff (name, age) values ('Grace', 85);\n"
+            "select name, age from staff order by name;\n");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) &&
+               strstr(s_outputText, "| name | age |") &&
+               strstr(s_outputText, "| Ada | 36 |") &&
+               strstr(s_outputText, "| Grace | 85 |") &&
+               strstr(s_outputText, "2 row(s)."),
+               "Run SQL executes a multi-statement script and renders the final query as a table");
+
+        set_document(editor, "update staff set age = age + 1;");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) && strstr(s_outputText, "2 row(s) affected."),
+               "Run SQL reports rows affected for a non-query statement");
+
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_SHOW_TABLES, editor) && strstr(s_outputText, "staff"),
+               "Show Tables lists the created table");
+
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_DESCRIBE, editor) &&
+               strstr(s_outputText, "| name |") && strstr(s_outputText, "| age |"),
+               "Describe Table reports the table's columns");
+
+        expect(run_ok(first + BROWSER_CURRENT, editor) && strstr(s_lastMessage, "Current database:"),
+               "Current Database reports the open database's path");
+
+        set_document(editor,
+            "| city | population |\n"
+            "| --- | --- |\n"
+            "| Paris | 2148000 |\n"
+            "| Oslo | 697000 |\n");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        expect(run_ok(first + BROWSER_IMPORT, editor) && strstr(s_lastMessage, "2 row(s) imported"),
+               "Import Markdown Table creates a table and inserts its rows");
+
+        /* The imported table is named "people" - fake_prompt's fixed reply
+           to "Table name:" - distinct from the script-created "staff". */
+        set_document(editor, "select city, population from people order by population;");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) &&
+               strstr(s_outputText, "| Oslo | 697000 |") && strstr(s_outputText, "| Paris | 2148000 |"),
+               "the imported rows are queryable, with population imported as a number");
+    }
+    free(source);
+    free(folderUtf8);
+    free(dbPathUtf8);
+    DeleteFileW(dbPath);
+    s_browserDbFolder = NULL;
+    s_browserDbPath = NULL;
+    plugin_host_shutdown();
+}
+
 /* ---- a stand-in Windows dictionary, for spell and the anagram plugin ---- */
 static const char *const s_dictionary[] = {
     "listen", "silent", "enlist", "tinsel", "inlets", "dirty", "room", "dormitory", "the"
@@ -2749,6 +2985,8 @@ int main(void) {
     test_read_relative_file(editor);
     test_directory(editor);
     test_bundled_plugins(editor);
+    test_json_yaml_store(editor);
+    test_sqlite_browser(editor);
     test_spelling(editor);
     test_output_api(editor);
     test_anagram_plugin(editor);

@@ -2,7 +2,7 @@
 
 A Tinker Editor plugin is a Lua script that adds commands, menus, and automatic actions to the editor. Plugins can read and change the document, ask simple questions, and show messages. They can't access arbitrary files, start programs, or reach the network. A folder extension can load its own Lua modules through the restricted `require` function.
 
-This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes, and developer-oriented extensions.
+This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes/JSON/YAML stores and a SQLite browser, and developer-oriented extensions.
 
 Paths below use `%APPDATA%\tinkeredit`; in portable mode use `portable-data` beside `tinkeredit.exe` instead.
 
@@ -405,7 +405,7 @@ Runs one statement (DDL, insert/update/delete, or even a `select` whose rows are
 
 #### `db:query(sql [, ...])`
 
-Runs a `select` the same way and returns an array of row tables (column name to value), or `nil, err`. A SQL `NULL` is simply absent from the row table.
+Runs a `select` the same way and returns an array of row tables (column name to value) plus the statement's column names in their declared order, or `nil, err`. A SQL `NULL` is simply absent from the row table. The second return exists because a row table's own key order isn't reliable - use it whenever you need columns in the order the query declared them, such as rendering a table.
 
 #### `db:close()`
 
@@ -415,13 +415,14 @@ Closes the database. A database still open when its Lua value is garbage-collect
 local db = assert(sqlite.open(app.workspace_path() .. "\\notes.db"))
 assert(db:exec("create table if not exists notes (id integer primary key, text text)"))
 assert(db:exec("insert into notes (text) values (?)", "Remember to write docs"))
-for _, row in ipairs(assert(db:query("select id, text from notes order by id"))) do
+local rows = assert(db:query("select id, text from notes order by id"))
+for _, row in ipairs(rows) do
   ui.log(row.id .. ": " .. row.text)
 end
 db:close()
 ```
 
-[`sqlite-notes.lua`](sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API.
+[`sqlite-notes.lua`](sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table, and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
 
 ## Where commands appear
 
