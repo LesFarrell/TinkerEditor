@@ -21,7 +21,7 @@ local function with_db(fn)
   local path = current_db_path()
   if not path then
     ui.message("Open or create a database first " ..
-      "(Plugins > SQLite Browser > Open Existing/Create New Database).", "SQLite Browser", "warning")
+      "(Tools > SQLite Browser > Open Existing/Create New Database).", "SQLite Browser", "warning")
     return
   end
   local db, openErr = sqlite.open(path)
@@ -205,17 +205,23 @@ menu.add("/Tools/SQLite Browser/Run SQL", function()
   with_db(function(db)
     local sql = source_text()
     if not sql:match("%S") then
-      ui.message("Select some SQL to run, or write it in the document.", "SQLite Browser", "warning")
+      ui.message("Select some SQL to run, write it in the document, " ..
+        "or use Run SQL (Enter Manually)...", "SQLite Browser", "warning")
       return
     end
     report_sql_result(db, sql)
   end)
 end)
 
+-- Remembered only for this editor session (not persisted via config, since
+-- an ad-hoc query may contain data the user wouldn't want written to disk).
+local lastManualSql = ""
+
 menu.add("/Tools/SQLite Browser/Run SQL (Enter Manually)...", function()
   with_db(function(db)
-    local sql = ui.prompt("SQL to run:", "", "SQLite Browser")
+    local sql = ui.prompt("SQL to run:", lastManualSql, "SQLite Browser")
     if not sql or not sql:match("%S") then return end
+    lastManualSql = sql
     report_sql_result(db, sql)
   end)
 end)
@@ -329,7 +335,10 @@ end
 
 -- A safe, unique SQL identifier for each header, in order: non-identifier
 -- characters are dropped, a name that collapses to nothing or starts with
--- a digit gets a fallback, and a repeat gets a numeric suffix.
+-- a digit gets a fallback, and a repeat gets a numeric suffix. Dedupe is
+-- case-insensitive because SQLite column names are: "Name" and "name"
+-- would otherwise both survive here and then fail CREATE TABLE as
+-- duplicate columns.
 local function unique_identifiers(names)
   local result, seen = {}, {}
   for i, name in ipairs(names) do
@@ -337,8 +346,8 @@ local function unique_identifiers(names)
     if id == "" then id = "column" .. i
     elseif id:match("^%d") then id = "c_" .. id end
     local base, suffix = id, 1
-    while seen[id] do suffix = suffix + 1; id = base .. "_" .. suffix end
-    seen[id] = true
+    while seen[id:lower()] do suffix = suffix + 1; id = base .. "_" .. suffix end
+    seen[id:lower()] = true
     result[i] = id
   end
   return result
@@ -346,9 +355,12 @@ end
 
 -- A cell's text as a SQL value: numbers import as numbers (so sorting and
 -- arithmetic work on them later), an empty cell imports as NULL, and
--- everything else stays text.
+-- everything else stays text. A leading zero before another digit (zip
+-- codes, IDs like "00501") is kept as text instead, since importing it as
+-- a number would silently drop the leading zero.
 local function cell_value(text)
   if text == nil or text == "" then return nil end
+  if text:match("^[%-%+]?0%d") then return text end
   if text:match("^[%-%+]?%d+%.?%d*$") or text:match("^[%-%+]?%.%d+$") then return tonumber(text) end
   return text
 end
@@ -367,9 +379,19 @@ menu.add("/Tools/SQLite Browser/Import Markdown Table into Database...", functio
     local quotedColumns = {}
     for i, column in ipairs(columns) do quotedColumns[i] = '"' .. column .. '"' end
 
+    -- The create-and-insert sequence runs as one transaction, so a failure
+    -- partway through (e.g. a row with the wrong number of cells) rolls
+    -- back cleanly instead of leaving the table half-populated.
+    local beginOk, beginErr = db:exec("begin")
+    if not beginOk then
+      ui.message("Could not start the import: " .. tostring(beginErr), "SQLite Browser", "error")
+      return
+    end
+
     local ok, createErr = db:exec("create table if not exists " .. quotedTable ..
       " (" .. table.concat(quotedColumns, ", ") .. ")")
     if not ok then
+      db:exec("rollback")
       ui.message("Could not create the table: " .. tostring(createErr), "SQLite Browser", "error")
       return
     end
@@ -383,9 +405,18 @@ menu.add("/Tools/SQLite Browser/Import Markdown Table into Database...", functio
       for i = 1, #columns do values[i] = cell_value(row[i]) end
       local insertOk, insertErr = db:exec(insertSql, table.unpack(values))
       if not insertOk then
-        ui.message("Row " .. rowIndex .. " failed: " .. tostring(insertErr), "SQLite Browser", "error")
+        db:exec("rollback")
+        ui.message("Row " .. rowIndex .. " failed; the import was rolled back: " ..
+          tostring(insertErr), "SQLite Browser", "error")
         return
       end
+    end
+
+    local commitOk, commitErr = db:exec("commit")
+    if not commitOk then
+      db:exec("rollback")
+      ui.message("Could not finish the import: " .. tostring(commitErr), "SQLite Browser", "error")
+      return
     end
     ui.message(#rows .. " row(s) imported into " .. quotedTable .. ".", "SQLite Browser")
   end)

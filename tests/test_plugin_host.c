@@ -297,6 +297,7 @@ static const char *s_calculatorExpression =
     "0x10 + 0b11 + (5 << 1) + min(4, 9)";
 static const char *s_z80EmulatorPath;
 static const char *s_manualSql;
+static const char *s_tableNamePrompt = "people";
 static const char *s_z80EmulatorArguments;
 
 static char *fake_config_get(const char *plugin, const char *key) {
@@ -354,8 +355,8 @@ static char *fake_prompt(const char *title, const char *label, const char *initi
         return reply;
     }
     if (strcmp(label, "Table name:") == 0) {
-        char *reply = (char *)malloc(7);
-        if (reply) strcpy(reply, "people");
+        char *reply = (char *)malloc(strlen(s_tableNamePrompt) + 1);
+        if (reply) strcpy(reply, s_tableNamePrompt);
         return reply;
     }
     if (strcmp(label, "SQL to run:") == 0) {
@@ -2676,6 +2677,56 @@ static void test_sqlite_browser(HWND editor) {
         expect(run_ok(first + BROWSER_RUN_SQL, editor) &&
                strstr(s_outputText, "| Oslo | 697000 |") && strstr(s_outputText, "| Paris | 2148000 |"),
                "the imported rows are queryable, with population imported as a number");
+
+        /* Two headers differing only by case ("Name" and "name") must not
+           collide as SQLite column names (SQLite folds case when checking
+           for a duplicate column), and a leading-zero cell (a zip code)
+           must survive import as text, not lose its leading zero as a
+           number. */
+        set_document(editor,
+            "| Name | name | ZIP |\n"
+            "| --- | --- | --- |\n"
+            "| Acme | Corp | 00501 |\n"
+            "| Globex | Inc | 90210 |\n");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_tableNamePrompt = "customers";
+        expect(run_ok(first + BROWSER_IMPORT, editor) && strstr(s_lastMessage, "2 row(s) imported"),
+               "Import Markdown Table dedupes same-case-insensitive headers instead of a duplicate-column error");
+        s_tableNamePrompt = "people";
+
+        set_document(editor, "select \"Name\", \"name_2\", \"ZIP\" from customers order by \"Name\";");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) &&
+               strstr(s_outputText, "| Acme | Corp | 00501 |") && strstr(s_outputText, "| Globex | Inc | 90210 |"),
+               "the deduped column holds its own data and the leading-zero ZIP imports as text, not the number 501");
+
+        /* A failure partway through the import (here, a UNIQUE constraint
+           violated by the second row) must roll back the whole import, not
+           leave the first row committed on its own. */
+        s_manualSql = "create table codes (code text unique, label text); "
+                      "insert into codes (code, label) values ('A1', 'Existing');";
+        expect(run_ok(first + BROWSER_RUN_SQL_MANUAL, editor), "seed the codes table for the rollback test");
+        s_manualSql = NULL;
+
+        set_document(editor,
+            "| code | label |\n"
+            "| --- | --- |\n"
+            "| A2 | New |\n"
+            "| A1 | Duplicate |\n");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_tableNamePrompt = "codes";
+        expect(run_ok(first + BROWSER_IMPORT, editor) && strstr(s_lastMessage, "rolled back"),
+               "Import Markdown Table reports a rolled-back import when a later row fails");
+        s_tableNamePrompt = "people";
+
+        set_document(editor, "select code from codes order by code;");
+        SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+        s_outputText[0] = 0;
+        expect(run_ok(first + BROWSER_RUN_SQL, editor) &&
+               strstr(s_outputText, "| A1 |") && !strstr(s_outputText, "| A2 |") &&
+               strstr(s_outputText, "1 row(s)."),
+               "the rolled-back import left only the pre-existing row, not the first new row");
     }
     free(source);
     free(folderUtf8);
