@@ -24,7 +24,19 @@ local BATCH = 5000
 local TIME_BUDGET = 3
 local MAX_PHRASE_WORDS = 8
 local MAX_PHRASES = 5000
-local MAX_LETTERS = 100
+-- Keep enough headroom for long names and phrases while retaining a guard
+-- against accidentally submitting an unbounded search to the plugin host.
+local MAX_LETTERS = 256
+
+local function configured_number(key, default, minimum, maximum)
+  local value = tonumber(config.get(key, default)) or default
+  return math.max(minimum, math.min(maximum, math.floor(value)))
+end
+
+local function max_letters() return configured_number("max_letters", MAX_LETTERS, 2, 2000) end
+local function check_limit() return configured_number("check_limit", CHECK_LIMIT, 1000, 1000000) end
+local function time_budget() return configured_number("time_budget", TIME_BUDGET, 1, 5) end
+local function max_phrases() return configured_number("max_phrases", MAX_PHRASES, 100, 10000) end
 
 -- The word list has every letter and many rare two-letter words, which
 -- would crowd English phrases, so phrases use only these short words.
@@ -121,7 +133,8 @@ end
 
 local function start_clock()
   local start = seconds_now()
-  return function() return (seconds_now() - start) % 86400 >= TIME_BUDGET end
+  local budget = time_budget()
+  return function() return (seconds_now() - start) % 86400 >= budget end
 end
 
 -- The candidates the dictionary accepts, and whether every one was checked
@@ -234,8 +247,8 @@ local function read_input(prompt)
   if #letters < 2 then
     ui.message("Enter at least two letters.", nil, "warning")
     return nil
-  elseif #letters > MAX_LETTERS then
-    ui.message(string.format("Use at most %d letters.", MAX_LETTERS), nil, "warning")
+  elseif #letters > max_letters() then
+    ui.message(string.format("Use at most %d letters.", max_letters()), nil, "warning")
     return nil
   end
   return text, letters, not language or language:lower():match("^en") ~= nil
@@ -269,7 +282,7 @@ local function solve()
     found, finished = english_words().by_signature[signature(tally(letters))] or {}, true
   else
     local out_of_time = start_clock()
-    local candidates = arrangements(tally(letters), #letters, CHECK_LIMIT)
+    local candidates = arrangements(tally(letters), #letters, check_limit())
     if not candidates then
       ui.message(string.format("%d letters have too many arrangements to check. " ..
         "Try Create Anagram Phrases, or fewer letters.", #letters), nil, "warning")
@@ -302,7 +315,7 @@ local function words_from_letters()
   if english then
     words, complete = listed_words_from(tally(letters), 3, #letters), #letters
   else
-    words, complete = words_from(tally(letters), 3, #letters, CHECK_LIMIT, start_clock())
+    words, complete = words_from(tally(letters), 3, #letters, check_limit(), start_clock())
   end
   if #words == 0 then
     ui.message("No words of three or more letters are in the dictionary.")
@@ -394,7 +407,7 @@ local function find_phrases(pool, words, by_signature, out_of_time)
     if seen[text] then return end
     seen[text] = true
     phrases[#phrases + 1] = { text = text, words = #sorted, longest = utf8.len(sorted[1]) }
-    if #phrases >= MAX_PHRASES then stopped = true end
+    if #phrases >= max_phrases() then stopped = true end
   end
 
   local function search(remaining)
@@ -441,7 +454,7 @@ local function create_phrases()
     texts, complete = listed_words_from(pool, 3, #letters - 1), #letters - 1
   else
     -- A smaller budget for the words leaves time to combine them.
-    texts, complete = words_from(pool, 2, #letters - 1, CHECK_LIMIT // 2, out_of_time)
+    texts, complete = words_from(pool, 2, #letters - 1, check_limit() // 2, out_of_time)
   end
   if english then
     for _, short in ipairs(SHORT_ENGLISH) do
@@ -546,7 +559,28 @@ local function scramble()
   editor.replace_selection(table.concat(parts))
 end
 
+local function configure()
+  local fields = {
+    { key = "max_letters", label = "Maximum input letters", default = max_letters(), minimum = 2, maximum = 2000 },
+    { key = "check_limit", label = "Non-English candidates", default = check_limit(), minimum = 1000, maximum = 1000000 },
+    { key = "time_budget", label = "Search seconds", default = time_budget(), minimum = 1, maximum = 5 },
+    { key = "max_phrases", label = "Maximum phrase results", default = max_phrases(), minimum = 100, maximum = 10000 }
+  }
+  for _, field in ipairs(fields) do
+    local answer = ui.prompt(field.label .. " (" .. field.minimum .. "–" .. field.maximum .. "):", tostring(field.default))
+    if not answer then return end
+    local value = tonumber(answer)
+    if not value or value < field.minimum or value > field.maximum then
+      ui.message(string.format("Enter a number from %d to %d.", field.minimum, field.maximum), nil, "warning")
+      return
+    end
+    config.set(field.key, math.floor(value))
+  end
+  ui.status("Anagram settings saved.")
+end
+
 menu.add("Anagrams (British English)/Solve Anagram...", solve)
 menu.add("Anagrams (British English)/Words From Letters...", words_from_letters)
 menu.add("Anagrams (British English)/Create Anagram Phrases...", create_phrases)
 menu.add("Anagrams (British English)/Scramble Words", scramble)
+menu.add("Anagrams (British English)/Configure...", configure)
