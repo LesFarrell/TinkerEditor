@@ -1350,14 +1350,14 @@ static void test_bundled_plugins(HWND editor) {
     expect(plugin_host_command_count() <= PLUGIN_MAX_COMMANDS / 2,
            "bundled plugins leave room under the command limit");
 
-    int encode64 = find_command("Developer Tools/Base64 Encode");
-    int decode64 = find_command("Developer Tools/Base64 Decode");
-    int encodeUrl = find_command("Developer Tools/URL Encode");
-    int decodeUrl = find_command("Developer Tools/URL Decode");
-    int encodeHex = find_command("Developer Tools/Hex Encode");
-    int decodeHex = find_command("Developer Tools/Hex Decode");
-    int encodeHtml = find_command("Developer Tools/HTML Entity Encode");
-    int decodeHtml = find_command("Developer Tools/HTML Entity Decode");
+    int encode64 = find_command("Encode/Base64 Encode");
+    int decode64 = find_command("Encode/Base64 Decode");
+    int encodeUrl = find_command("Encode/URL Encode");
+    int decodeUrl = find_command("Encode/URL Decode");
+    int encodeHex = find_command("Encode/Hex Encode");
+    int decodeHex = find_command("Encode/Hex Decode");
+    int encodeHtml = find_command("Encode/HTML Escape");
+    int decodeHtml = find_command("Encode/HTML Unescape");
     int csvInspect = find_command("/Tools/CSV/Inspect and Validate");
     int csvFormat = find_command("/Tools/CSV/Format Columns");
     int csvToComma = find_command("/Tools/CSV/Convert/To Comma-Separated");
@@ -1913,7 +1913,7 @@ static void test_bundled_plugins(HWND editor) {
     SendMessageA(editor, SCI_SETSEL, 0, 4);
     s_lastMessage[0] = 0;
     expect(run_ok(decode64, editor) && document_is(editor, "AB==") &&
-           strstr(s_lastMessage, "not valid Base64"),
+           strstr(s_lastMessage, "isn't valid Base64"),
            "bundled Base64 decoder rejects non-canonical padding bits");
 
     set_document(editor, "AAEC/w==");
@@ -1970,9 +1970,9 @@ static void test_bundled_plugins(HWND editor) {
 
     set_document(editor, "Hi!");
     SendMessageA(editor, SCI_SETSEL, 0, 3);
-    expect(encodeHex >= 0 && run_ok(encodeHex, editor) && document_is(editor, "486921"),
+    expect(encodeHex >= 0 && run_ok(encodeHex, editor) && document_is(editor, "48 69 21"),
            "bundled hexadecimal encoder");
-    SendMessageA(editor, SCI_SETSEL, 0, 6);
+    SendMessageA(editor, SCI_SETSEL, 0, 9);
     expect(decodeHex >= 0 && run_ok(decodeHex, editor) && document_is(editor, "Hi!"),
            "bundled hexadecimal decoder");
 
