@@ -72,6 +72,7 @@
 #include "theme.h"
 #include "themed_scrollbar.h"
 #include "toolbar_icons.h"
+#include "com_ptr.h"
 
 #include <WebView2.h>
 #include "../third_party/scintilla/include/Scintilla.h"
