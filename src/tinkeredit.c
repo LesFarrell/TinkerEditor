@@ -81,7 +81,7 @@
 #include "tinkeredit.h"
 
 typedef struct AppWindows {
-    HWND edit, preview, tabs, status, outline, outlineClose, minimap, splitEdit, lastEditView;
+    HWND edit, preview, previewClose, tabs, status, outline, outlineClose, minimap, splitEdit, lastEditView;
     HWND debugStatus, debugVariables;
     HWND debugContinue, debugStepOver, debugStepInto, debugStepOut;
     HWND outputPanel, outputInput;
@@ -90,6 +90,7 @@ typedef struct AppWindows {
 static AppWindows g_windows;
 #define g_hEdit g_windows.edit
 #define g_hPreview g_windows.preview
+#define g_hPreviewClose g_windows.previewClose
 #define g_hTabs g_windows.tabs
 #define g_hStatus g_windows.status
 #define g_hOutline g_windows.outline
@@ -682,6 +683,16 @@ static void create_preview_control(HWND hwnd) {
     g_hPreview = CreateWindowExA(0, "STATIC", "",
         WS_CHILD | WS_VISIBLE,
         0, 0, 0, 0, hwnd, (HMENU)ID_PREVIEW, GetModuleHandleA(NULL), NULL);
+
+    /* The close button in a small header above the preview. Its id is
+       IDM_VIEW_TOGGLEPREVIEW itself - the View menu's own toggle command -
+       so clicking it reaches toggle_preview() exactly as that menu item
+       does, the same reuse layout_outline()'s close button makes of
+       IDM_VIEW_OUTLINE. */
+    g_hPreviewClose = CreateWindowExW(0, L"BUTTON", L"X",
+        WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, hwnd, (HMENU)(UINT_PTR)IDM_VIEW_TOGGLEPREVIEW, GetModuleHandleW(NULL), NULL);
+    SendMessageW(g_hPreviewClose, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
 }
 
 static void initialize_main_window(HWND hwnd) {
@@ -1024,7 +1035,8 @@ static int handle_owner_draw(LPARAM lParam) {
     if (item->CtlType == ODT_MENU && item->itemData)
         draw_main_menu_item(item);
     else if (item->CtlType == ODT_BUTTON &&
-            (item->hwndItem == g_hExplorerClose || item->hwndItem == g_hOutlineClose))
+            (item->hwndItem == g_hExplorerClose || item->hwndItem == g_hOutlineClose ||
+             item->hwndItem == g_hPreviewClose))
         draw_debug_panel_button(item); /* the same plain bordered push-button painter the output and Git panels use */
     else if (item->CtlType == ODT_BUTTON)
         draw_toolbar_button(item);

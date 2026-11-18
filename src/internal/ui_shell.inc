@@ -1169,6 +1169,29 @@ static void layout_outline(HWND hwnd, LayoutArea *area) {
     ShowWindow(g_hOutline, SW_SHOW);
 }
 
+/* Positions the preview's own close button in a small header above it - the
+   same header/padding/button size the explorer, outline, output and Git
+   panels use - then fits g_hPreview into whatever's left of (x, y, width,
+   h), and returns the WebView2 bounds relative to g_hPreview's own client
+   origin (which MoveWindow has already positioned), not the main window. */
+static RECT position_preview(HWND hwnd, int x, int y, int width, int h) {
+    int dpi = GetDpiForWindow(hwnd);
+    int pad = MulDiv(OUTPUT_PANEL_PADDING, dpi, 96);
+    int header = MulDiv(OUTPUT_HEADER_HEIGHT, dpi, 96);
+    int closeWidth = MulDiv(DEBUG_CLOSE_BUTTON_WIDTH, dpi, 96);
+    int row = header - pad;
+    if (header > h) header = h;
+    MoveWindow(g_hPreviewClose, x + width - pad - closeWidth, y + pad / 2, closeWidth, row, TRUE);
+    ShowWindow(g_hPreviewClose, SW_SHOW);
+    InvalidateRect(g_hPreviewClose, NULL, TRUE);
+
+    int previewHeight = h - header;
+    if (previewHeight < 0) previewHeight = 0;
+    MoveWindow(g_hPreview, x, y + header, width, previewHeight, TRUE);
+    ShowWindow(g_hPreview, SW_SHOW);
+    return (RECT){ 0, 0, width, previewHeight };
+}
+
 /* The editor and the preview, alone or side by side with the splitter
    between them, fill whatever the panels above left over. */
 static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
@@ -1178,6 +1201,7 @@ static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
     if (showEditor && !showPreview) {
         layout_editor_with_minimap(hwnd, x, y, width, h);
         ShowWindow(g_hPreview, SW_HIDE);
+        ShowWindow(g_hPreviewClose, SW_HIDE);
         RECT zero = { 0, 0, 0, 0 };
         set_webview_bounds(zero, FALSE);
         return;
@@ -1187,11 +1211,7 @@ static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
         ShowWindow(g_hEdit, SW_HIDE);
         if (g_hMinimap) ShowWindow(g_hMinimap, SW_HIDE);
         if (g_hSplitEdit) ShowWindow(g_hSplitEdit, SW_HIDE);
-        ShowWindow(g_hPreview, SW_SHOW);
-        MoveWindow(g_hPreview, x, y, width, h, TRUE);
-        /* WebView2 controller bounds are relative to g_hPreview's own client
-           origin (which MoveWindow already positioned), not the main window. */
-        RECT wvRc = { 0, 0, width, h };
+        RECT wvRc = position_preview(hwnd, x, y, width, h);
         set_webview_bounds(wvRc, TRUE);
         return;
     }
@@ -1203,18 +1223,15 @@ static void layout_editor_and_preview(HWND hwnd, const LayoutArea *area) {
     if (g_splitterPos > width - MIN_PANE_WIDTH)
         g_splitterPos = (width - MIN_PANE_WIDTH > MIN_PANE_WIDTH) ? width - MIN_PANE_WIDTH : MIN_PANE_WIDTH;
 
-    ShowWindow(g_hPreview, SW_SHOW);
     g_splitterRect = (RECT){ x + g_splitterPos, y, x + g_splitterPos + SPLITTER_WIDTH, y + h };
     int rightWidth = width - g_splitterPos - SPLITTER_WIDTH;
     RECT wvRc;
     if (g_previewOnLeft) {
-        MoveWindow(g_hPreview, x, y, g_splitterPos, h, TRUE);
+        wvRc = position_preview(hwnd, x, y, g_splitterPos, h);
         layout_editor_with_minimap(hwnd, x + g_splitterPos + SPLITTER_WIDTH, y, rightWidth, h);
-        wvRc = (RECT){ 0, 0, g_splitterPos, h };
     } else {
         layout_editor_with_minimap(hwnd, x, y, g_splitterPos, h);
-        MoveWindow(g_hPreview, x + g_splitterPos + SPLITTER_WIDTH, y, rightWidth, h, TRUE);
-        wvRc = (RECT){ 0, 0, rightWidth, h };
+        wvRc = position_preview(hwnd, x + g_splitterPos + SPLITTER_WIDTH, y, rightWidth, h);
     }
     set_webview_bounds(wvRc, TRUE);
 }
