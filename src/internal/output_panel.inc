@@ -48,7 +48,7 @@ int g_outputTab = OUTPUT_TAB_RUN;
    the panes themselves are indexed by them; Output remains the default tab
    but is placed last in the strip. */
 static const int OUTPUT_TAB_ORDER[OUTPUT_TAB_COUNT] = {
-    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_RUN
+    OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_TABLE, OUTPUT_TAB_RUN
 };
 static int g_outputNextSession = 1;
 static HWND g_hOutputClear, g_hOutputStop, g_hOutputClose;
@@ -153,6 +153,7 @@ static HWND active_output_focus_target(void) {
     if (g_outputTab == OUTPUT_TAB_TERMINAL) return terminal_view_window(g_terminalView);
     if (g_outputTab == OUTPUT_TAB_PROBLEMS) return g_outputPanes[OUTPUT_TAB_PROBLEMS].view;
     if (g_outputTab == OUTPUT_TAB_DEBUG) return g_hDebugVariables;
+    if (g_outputTab == OUTPUT_TAB_TABLE) return g_outputPanes[OUTPUT_TAB_TABLE].view;
     return g_hOutputInput;
 }
 
@@ -213,6 +214,23 @@ static void apply_debug_tab_theme(void) {
     }
 }
 
+/* The Table tab's grid: a plain control like Debug's Variables list, themed
+   the same way. */
+static void apply_table_tab_theme(void) {
+    HWND table = g_outputPanes[OUTPUT_TAB_TABLE].view;
+    if (!table) return;
+    apply_explorer_theme(table);
+    InvalidateRect(table, NULL, TRUE);
+    ListView_SetBkColor(table, theme_bg_color());
+    ListView_SetTextBkColor(table, theme_bg_color());
+    ListView_SetTextColor(table, theme_fg_color());
+    HWND header = ListView_GetHeader(table);
+    if (header) {
+        apply_explorer_theme(header);
+        InvalidateRect(header, NULL, TRUE);
+    }
+}
+
 /* Implemented in git_panel.inc/merge_panel.inc, included later in the unity build. */
 static void apply_git_panel_theme(void);
 static void apply_git_panel_font(const char *faceUtf8);
@@ -228,6 +246,7 @@ static void apply_output_panel_theme(void) {
     const COLORREF *ansi = g_editorDarkMode ? OUTPUT_ANSI_DARK : OUTPUT_ANSI_LIGHT;
     terminal_view_apply_theme(g_terminalView, ansi, p->fg, p->bg);
     apply_debug_tab_theme();
+    apply_table_tab_theme();
     apply_git_panel_theme();
     apply_merge_panel_theme();
     InvalidateRect(g_hOutputPanel, NULL, TRUE);
@@ -1642,6 +1661,172 @@ static void draw_output_tab_button(const DRAWITEMSTRUCT *dis, int tab) {
     }
 }
 
+/* ---- Table tab: output.table()'s grid ----
+   A plain WC_LISTVIEWW, rebuilt from scratch by every output.table() call
+   (unlike Debug's Variables list, which is updated in place). g_tableCells
+   keeps each cell's real value alongside its displayed text so clicking a
+   column header can sort numbers numerically rather than lexically. */
+
+typedef struct TableCell { int isNumber; double number; WCHAR *text; } TableCell;
+static WCHAR **g_tableColumns;  /* owned, g_tableColumnCount entries */
+static TableCell *g_tableCells; /* owned, row-major, g_tableRowCount * g_tableColumnCount */
+static int g_tableColumnCount, g_tableRowCount;
+static int g_tableSortColumn = -1, g_tableSortDescending;
+
+static void free_table_data(void) {
+    for (int i = 0; i < g_tableColumnCount; i++) free(g_tableColumns[i]);
+    free(g_tableColumns);
+    for (int i = 0; i < g_tableRowCount * g_tableColumnCount; i++) free(g_tableCells[i].text);
+    free(g_tableCells);
+    g_tableColumns = NULL; g_tableCells = NULL; g_tableColumnCount = 0; g_tableRowCount = 0;
+}
+
+/* ListView_SortItemsEx isn't stable, so ties fall back to the original row
+   order (lParam is each item's index into g_tableCells) to stay deterministic
+   across repeated sorts. */
+static int CALLBACK compare_table_rows(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort) {
+    (void)lParamSort;
+    if (g_tableSortColumn < 0) return 0;
+    const TableCell *a = &g_tableCells[(int)lParam1 * g_tableColumnCount + g_tableSortColumn];
+    const TableCell *b = &g_tableCells[(int)lParam2 * g_tableColumnCount + g_tableSortColumn];
+    int result = (a->isNumber && b->isNumber) ? (a->number > b->number) - (a->number < b->number)
+                                               : _wcsicmp(a->text, b->text);
+    if (result == 0) result = ((int)lParam1 > (int)lParam2) - ((int)lParam1 < (int)lParam2);
+    return g_tableSortDescending ? -result : result;
+}
+
+static void sort_table_grid(HWND table, int column) {
+    if (column < 0 || column >= g_tableColumnCount) return;
+    if (g_tableSortColumn == column) g_tableSortDescending = !g_tableSortDescending;
+    else { g_tableSortColumn = column; g_tableSortDescending = 0; }
+    ListView_SortItemsEx(table, compare_table_rows, 0);
+    HWND header = ListView_GetHeader(table);
+    if (header) InvalidateRect(header, NULL, TRUE);
+}
+
+/* Fully custom-drawn, like paint_debug_header - comctl32 never gets to draw
+   its own sort arrow, so the sorted column's label grows one instead. */
+static void paint_table_header(HWND header, HDC hdc) {
+    RECT client;
+    GetClientRect(header, &client);
+    fill_rect_color(hdc, &client, theme_bg_color());
+
+    HFONT font = (HFONT)SendMessageW(header, WM_GETFONT, 0, 0);
+    if (!font) font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT oldFont = (HFONT)SelectObject(hdc, font);
+    int count = (int)SendMessageW(header, HDM_GETITEMCOUNT, 0, 0);
+    for (int column = 0; column < count; column++) {
+        RECT rc = {0};
+        if (!SendMessageW(header, HDM_GETITEMRECT, (WPARAM)column, (LPARAM)&rc)) continue;
+        WCHAR label[64] = L"";
+        HDITEMW item = {0};
+        item.mask = HDI_TEXT;
+        item.pszText = label;
+        item.cchTextMax = sizeof(label) / sizeof(label[0]);
+        SendMessageW(header, HDM_GETITEMW, (WPARAM)column, (LPARAM)&item);
+        if (column == g_tableSortColumn && wcslen(label) < 61)
+            wcscat(label, g_tableSortDescending ? L" \x25bc" : L" \x25b2");
+
+        RECT divider = { rc.right - 1, rc.top, rc.right, rc.bottom };
+        fill_rect_color(hdc, &divider, theme_border_color());
+        rc.left += 7;
+        rc.right -= 5;
+        SetTextColor(hdc, theme_fg_color());
+        SetBkMode(hdc, TRANSPARENT);
+        DrawTextW(hdc, label, -1, &rc,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+    RECT bottom = { client.left, client.bottom - 1, client.right, client.bottom };
+    fill_rect_color(hdc, &bottom, theme_border_color());
+    SelectObject(hdc, oldFont);
+}
+
+static LRESULT CALLBACK TableHeaderSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                                 LPARAM lParam, UINT_PTR id, DWORD_PTR data) {
+    (void)lParam; (void)id; (void)data;
+    if (msg == WM_ERASEBKGND) return 1;
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        paint_table_header(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_PRINTCLIENT) {
+        paint_table_header(hwnd, (HDC)wParam);
+        return 0;
+    }
+    if (msg == WM_THEMECHANGED) {
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY)
+        RemoveWindowSubclass(hwnd, TableHeaderSubclassProc, 1);
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+/* output.table()'s callback: rebuilds the grid from scratch (unlike Debug's
+   variables, which update in place) and opens the panel on it, the way
+   output_report() opens the Run tab. columns/cells are only valid for this
+   call, so everything kept past it is deep-copied here first. */
+static void show_output_table(const char *const *columns, int columnCount,
+                              const PluginTableCell *cells, int rowCount) {
+    HWND table = g_outputPanes[OUTPUT_TAB_TABLE].view;
+    if (!table) return;
+    SendMessageW(table, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(table);
+    while (ListView_DeleteColumn(table, 0)) { }
+    free_table_data();
+    g_tableColumnCount = columnCount;
+    g_tableRowCount = rowCount;
+    g_tableColumns = (WCHAR **)calloc((size_t)columnCount, sizeof(*g_tableColumns));
+    g_tableCells = (TableCell *)calloc((size_t)rowCount * (size_t)columnCount, sizeof(*g_tableCells));
+    int dpi = GetDpiForWindow(table);
+    int columnWidth = MulDiv(140, dpi, 96);
+    for (int column = 0; column < columnCount; column++) {
+        g_tableColumns[column] = to_wide(columns[column]);
+        LVCOLUMNW item = {0};
+        item.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+        item.pszText = g_tableColumns[column] ? g_tableColumns[column] : L"";
+        item.cx = columnWidth;
+        item.iSubItem = column;
+        SendMessageW(table, LVM_INSERTCOLUMNW, column, (LPARAM)&item);
+    }
+    for (int row = 0; row < rowCount; row++) {
+        LVITEMW item = {0};
+        item.mask = LVIF_TEXT | LVIF_PARAM;
+        item.iItem = row;
+        item.lParam = row;
+        for (int column = 0; column < columnCount; column++) {
+            const PluginTableCell *source = &cells[row * columnCount + column];
+            TableCell *cell = &g_tableCells[row * columnCount + column];
+            cell->isNumber = source->isNumber;
+            cell->number = source->number;
+            cell->text = to_wide(source->text);
+            WCHAR *shown = cell->text ? cell->text : L"";
+            if (column == 0) {
+                item.pszText = shown;
+                SendMessageW(table, LVM_INSERTITEMW, 0, (LPARAM)&item);
+            } else {
+                LVITEMW subitem = {0};
+                subitem.mask = LVIF_TEXT;
+                subitem.iSubItem = column;
+                subitem.pszText = shown;
+                SendMessageW(table, LVM_SETITEMTEXTW, (WPARAM)row, (LPARAM)&subitem);
+            }
+        }
+    }
+    for (int column = 0; column < columnCount; column++)
+        ListView_SetColumnWidth(table, column, LVSCW_AUTOSIZE_USEHEADER);
+    g_tableSortColumn = -1;
+    g_tableSortDescending = 0;
+    SendMessageW(table, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(table, NULL, TRUE);
+    HWND header = ListView_GetHeader(table);
+    if (header) InvalidateRect(header, NULL, TRUE);
+    show_output_panel(OUTPUT_TAB_TABLE, 0);
+}
+
 /* The panel's own rectangles, at the window's DPI. */
 typedef struct OutputPanelLayout {
     int pad, header, input;
@@ -1667,7 +1852,8 @@ static OutputPanelLayout output_panel_layout(HWND panel) {
    below it; the Run tab keeps the two separate. */
 static RECT output_content_rect(const OutputPanelLayout *layout) {
     RECT rect = layout->view;
-    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS)
+    if (g_outputTab == OUTPUT_TAB_TERMINAL || g_outputTab == OUTPUT_TAB_PROBLEMS ||
+        g_outputTab == OUTPUT_TAB_TABLE)
         rect.bottom = layout->inputBox.bottom;
     return rect;
 }
@@ -1693,6 +1879,8 @@ static int active_output_buttons(OutputHeaderButton *buttons, int dpi) {
     } else if (g_outputTab == OUTPUT_TAB_PROBLEMS) {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputClear, buttonWidth };
+    } else if (g_outputTab == OUTPUT_TAB_TABLE) {
+        /* Replaced wholesale by the next output.table() call; nothing to clear or stop. */
     } else {
         int buttonWidth = MulDiv(OUTPUT_BUTTON_WIDTH, dpi, 96);
         buttons[n++] = (OutputHeaderButton){ g_hOutputStop, buttonWidth };
@@ -1750,7 +1938,7 @@ static void size_output_panel(HWND panel) {
        view gets its own content rect: the Terminal tab's spans the input
        box's space too, since it has no separate input line. */
     for (int i = 0; i < OUTPUT_TAB_COUNT; i++) {
-        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS)
+        RECT content = (i == OUTPUT_TAB_TERMINAL || i == OUTPUT_TAB_PROBLEMS || i == OUTPUT_TAB_TABLE)
                      ? output_content_rect(&layout) : layout.view;
         MoveWindow(g_outputPanes[i].view, content.left + 1, content.top + 1,
                    content.right - content.left - 2, content.bottom - content.top - 2, TRUE);
@@ -1782,7 +1970,8 @@ static void paint_output_panel(HWND panel, HDC hdc) {
     OutputPanelLayout layout = output_panel_layout(panel);
     RECT content = output_content_rect(&layout);
     frame_rect(hdc, &content, theme_border_color());
-    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS)
+    if (g_outputTab != OUTPUT_TAB_TERMINAL && g_outputTab != OUTPUT_TAB_PROBLEMS &&
+        g_outputTab != OUTPUT_TAB_TABLE)
         frame_rect(hdc, &layout.inputBox, theme_border_color());
 }
 
@@ -1831,6 +2020,10 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
                     select_output_tab(OUTPUT_TAB_DEBUG);
                     SetFocus(g_hDebugVariables);
                     return 0;
+                case ID_OUTPUT_TAB_TABLE:
+                    select_output_tab(OUTPUT_TAB_TABLE);
+                    SetFocus(g_outputPanes[OUTPUT_TAB_TABLE].view);
+                    return 0;
                 case IDM_DEBUG_CONTINUE: case IDM_DEBUG_STEP_OVER:
                 case IDM_DEBUG_STEP_INTO: case IDM_DEBUG_STEP_OUT:
                     /* debugger.inc's run_debugger_command() is reached through
@@ -1875,6 +2068,9 @@ static LRESULT CALLBACK OutputPanelSubclassProc(HWND hwnd, UINT msg, WPARAM wPar
                 update_output_controls();
             } else if (notification->code == TVN_RESTART_REQUESTED) {
                 start_terminal();
+            } else if (notification->code == LVN_COLUMNCLICK &&
+                       notification->hwndFrom == g_outputPanes[OUTPUT_TAB_TABLE].view) {
+                sort_table_grid(notification->hwndFrom, ((NMLISTVIEW *)lParam)->iSubItem);
             }
             return 0;
         }
@@ -1930,9 +2126,10 @@ static void create_output_panel(HWND hwnd) {
                                      0, 0, 0, 0, hwnd, (HMENU)ID_OUTPUT_PANEL, GetModuleHandleW(NULL), NULL);
     SetWindowSubclass(g_hOutputPanel, OutputPanelSubclassProc, 1, 0);
     static const WCHAR *const labels[OUTPUT_TAB_COUNT] =
-        { L"Output", L"Terminal", L"Problems", L"Debug" };
+        { L"Output", L"Terminal", L"Problems", L"Debug", L"Table" };
     static const int tabIds[OUTPUT_TAB_COUNT] = { ID_OUTPUT_TAB_RUN, ID_OUTPUT_TAB_TERMINAL,
-                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG };
+                                                  ID_OUTPUT_TAB_PROBLEMS, ID_OUTPUT_TAB_DEBUG,
+                                                  ID_OUTPUT_TAB_TABLE };
     for (int position = 0; position < OUTPUT_TAB_COUNT; position++) {
         int tab = OUTPUT_TAB_ORDER[position];
         g_outputPanes[tab].tab = create_output_button(g_hOutputPanel, labels[tab], tabIds[tab]);
@@ -1999,6 +2196,19 @@ static void create_output_panel(HWND hwnd) {
     SendMessageW(g_hDebugStatus, WM_SETFONT, (WPARAM)debugFont, TRUE);
     SendMessageW(g_hDebugVariables, WM_SETFONT, (WPARAM)debugFont, TRUE);
 
+    /* output.table()'s grid. No columns yet - the first call supplies them,
+       since their count and names vary with each result set. */
+    g_outputPanes[OUTPUT_TAB_TABLE].view = CreateWindowExW(0, WC_LISTVIEWW, L"",
+        WS_CHILD | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        0, 0, 0, 0, g_hOutputPanel, (HMENU)ID_TABLE_VIEW, GetModuleHandleW(NULL), NULL);
+    HWND tableView = g_outputPanes[OUTPUT_TAB_TABLE].view;
+    ListView_SetExtendedListViewStyle(tableView,
+        LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
+    HWND tableHeader = ListView_GetHeader(tableView);
+    if (tableHeader) SetWindowSubclass(tableHeader, TableHeaderSubclassProc, 1, 0);
+    ShowWindow(tableView, g_outputTab == OUTPUT_TAB_TABLE ? SW_SHOW : SW_HIDE);
+    SendMessageW(tableView, WM_SETFONT, (WPARAM)debugFont, TRUE);
+
     g_hOutputClear = create_output_button(g_hOutputPanel, L"Clear", ID_OUTPUT_CLEAR);
     g_hOutputStop = create_output_button(g_hOutputPanel, L"Stop", ID_OUTPUT_STOP);
     g_hOutputClose = create_output_button(g_hOutputPanel, L"X", ID_OUTPUT_CLOSE);
@@ -2035,4 +2245,5 @@ static void shutdown_output_panel(void) {
     g_terminalView = NULL;
     for (int i = 0; i < g_outputHistoryCount; i++) free(g_outputHistory[i]);
     g_outputHistoryCount = g_outputHistoryIndex = 0;
+    free_table_data();
 }

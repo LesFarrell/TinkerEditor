@@ -296,6 +296,11 @@ static const char *s_alignDelimiter = "=";
 static const char *s_calculatorExpression =
     "0x10 + 0b11 + (5 << 1) + min(4, 9)";
 static const char *s_z80EmulatorPath;
+/* sqlite-browser.lua's "show_grid" checkbox and its "db_path" setting are
+   both config.get/set("sqlite-browser.lua", ...) calls, so they'd otherwise
+   collide in the single-slot fake above - same trick as the assemblers keys
+   below. */
+static int s_browserShowGrid;
 static const char *s_manualSql;
 static const char *s_tableNamePrompt = "people";
 static const char *s_z80EmulatorArguments;
@@ -305,6 +310,8 @@ static char *fake_config_get(const char *plugin, const char *key) {
     if (strcmp(plugin, "assemblers") == 0) {
         if (strcmp(key, "z80_emulator_path") == 0) special = s_z80EmulatorPath;
         else if (strcmp(key, "z80_emulator_arguments") == 0) special = s_z80EmulatorArguments;
+    } else if (strcmp(plugin, "sqlite-browser.lua") == 0 && strcmp(key, "show_grid") == 0) {
+        special = s_browserShowGrid ? "1" : NULL;
     }
     if (special) {
         char *copy = (char *)malloc(strlen(special) + 1);
@@ -320,6 +327,10 @@ static char *fake_config_get(const char *plugin, const char *key) {
 }
 
 static int fake_config_set(const char *plugin, const char *key, const char *value) {
+    if (strcmp(plugin, "sqlite-browser.lua") == 0 && strcmp(key, "show_grid") == 0) {
+        s_browserShowGrid = value && value[0] && strcmp(value, "0") != 0 && _stricmp(value, "false") != 0;
+        return 1;
+    }
     snprintf(s_configPlugin, sizeof(s_configPlugin), "%s", plugin);
     snprintf(s_configKey, sizeof(s_configKey), "%s", key);
     snprintf(s_configValue, sizeof(s_configValue), "%s", value ? value : "");
@@ -1242,6 +1253,32 @@ static void fake_output_clear(void) { s_outputText[0] = 0; }
 static void fake_output_show(void) { s_outputShown = 1; }
 static void fake_output_hide(void) { s_outputShown = 0; }
 static int fake_output_visible(void) { return s_outputShown; }
+
+static char s_tableText[4096];
+static int s_tableColumnCount, s_tableRowCount, s_tableShown;
+
+/* Flattens the grid into "col1|col2\nrow1col1|row1col2\n..." so tests can
+   check its shape and contents with plain string functions. */
+static void fake_output_table(const char *const *columns, int columnCount,
+                              const PluginTableCell *cells, int rowCount) {
+    s_tableColumnCount = columnCount;
+    s_tableRowCount = rowCount;
+    s_tableShown = 1;
+    s_tableText[0] = 0;
+    for (int column = 0; column < columnCount; column++) {
+        size_t used = strlen(s_tableText);
+        snprintf(s_tableText + used, sizeof(s_tableText) - used, "%s%s", column ? "|" : "", columns[column]);
+    }
+    for (int row = 0; row < rowCount; row++) {
+        size_t used = strlen(s_tableText);
+        snprintf(s_tableText + used, sizeof(s_tableText) - used, "\n");
+        for (int column = 0; column < columnCount; column++) {
+            const PluginTableCell *cell = &cells[row * columnCount + column];
+            used = strlen(s_tableText);
+            snprintf(s_tableText + used, sizeof(s_tableText) - used, "%s%s", column ? "|" : "", cell->text);
+        }
+    }
+}
 
 static void fake_problems_report(const char *source, const char *text) {
     snprintf(s_problemSource, sizeof(s_problemSource), "%s", source ? source : "");
@@ -2557,10 +2594,11 @@ static void test_sqlite_browser(HWND editor) {
         .prompt = fake_prompt, .choose = fake_choose, .pick_path = fake_pick_browser_path,
         .config_get = fake_config_get, .config_set = fake_config_set,
         .output_write = fake_output_write, .output_show = fake_output_show,
-        .message = fake_message
+        .output_table = fake_output_table, .message = fake_message, .status = fake_status
     };
     plugin_host_set_callbacks(&fakes);
     s_configValue[0] = 0; /* force a fresh "no database open yet" state */
+    s_browserShowGrid = 0;
 
     int sourceLength = 0;
     char *source = read_bytes_file(L"plugins\\sqlite-browser.lua", &sourceLength);
@@ -2568,10 +2606,11 @@ static void test_sqlite_browser(HWND editor) {
     if (source) {
         int first = load_ok("sqlite-browser.lua", source);
         /* Registration order in the file: Open Existing, Create New, Current
-           Database, Run SQL, Run SQL (Enter Manually), Show Tables, Describe
-           Table, Import Markdown. */
-        enum { BROWSER_OPEN_EXISTING = 0, BROWSER_CREATE_NEW = 1, BROWSER_CURRENT = 2, BROWSER_RUN_SQL = 3,
-               BROWSER_RUN_SQL_MANUAL = 4, BROWSER_SHOW_TABLES = 5, BROWSER_DESCRIBE = 6, BROWSER_IMPORT = 7 };
+           Database, Show Results as Grid, Run SQL, Run SQL (Enter Manually),
+           Show Tables, Describe Table, Import Markdown. */
+        enum { BROWSER_OPEN_EXISTING = 0, BROWSER_CREATE_NEW = 1, BROWSER_CURRENT = 2, BROWSER_SHOW_GRID = 3,
+               BROWSER_RUN_SQL = 4, BROWSER_RUN_SQL_MANUAL = 5, BROWSER_SHOW_TABLES = 6, BROWSER_DESCRIBE = 7,
+               BROWSER_IMPORT = 8 };
 
         set_document(editor, "");
         expect(run_ok(first + BROWSER_RUN_SQL, editor) && strstr(s_lastMessage, "Open or create a database"),
@@ -2691,6 +2730,15 @@ static void test_sqlite_browser(HWND editor) {
                strstr(s_outputText, "| A1 |") && !strstr(s_outputText, "| A2 |") &&
                strstr(s_outputText, "1 row(s)."),
                "the rolled-back import left only the pre-existing row, not the first new row");
+
+        expect(run_ok(first + BROWSER_SHOW_GRID, editor) &&
+               plugin_host_command_is_checked(first + BROWSER_SHOW_GRID),
+               "Show Results as Grid switches on");
+        s_outputText[0] = 0;
+        s_tableShown = 0;
+        expect(run_ok(first + BROWSER_SHOW_TABLES, editor) && s_tableShown && !s_outputText[0] &&
+               s_tableColumnCount == 2 && strstr(s_tableText, "name|type"),
+               "with the grid on, Show Tables calls output.table instead of output.report");
     }
     free(source);
     free(folderUtf8);
@@ -2995,6 +3043,33 @@ static void test_output_api(HWND editor) {
     expect(run_fails(first, editor, "not available"), "the output API needs the panel");
 }
 
+static void test_output_table_api(HWND editor) {
+    static const PluginHostCallbacks fakes = { .output_table = fake_output_table };
+    plugin_host_set_callbacks(&fakes);
+    /* 257/10001 mirror PLUGIN_MAX_OUTPUT_TABLE_COLUMNS/ROWS (256/10000) plus one. */
+    int first = load_ok("output_table.lua",
+        "menu.add('Table', function()\n"
+        "  output.table({'a', 'b'}, {{a = 1, b = 'x'}, {a = 2}})\n"
+        "  assert(not pcall(output.table, 'not a table', {}), 'columns must be a table')\n"
+        "  assert(not pcall(output.table, {'a'}, 'not a table'), 'rows must be a table')\n"
+        "  assert(not pcall(output.table, {'a'}, {{a = {}}}), 'cell values are restricted')\n"
+        "  local tooManyColumns = {}\n"
+        "  for i = 1, 257 do tooManyColumns[i] = tostring(i) end\n"
+        "  assert(not pcall(output.table, tooManyColumns, {}), 'columns are capped')\n"
+        "  local tooManyRows = {}\n"
+        "  for i = 1, 10001 do tooManyRows[i] = { a = i } end\n"
+        "  assert(not pcall(output.table, {'a'}, tooManyRows), 'rows are capped')\n"
+        "  assert(app.capabilities().output_table)\n"
+        "end)\n");
+    s_tableText[0] = 0;
+    s_tableColumnCount = s_tableRowCount = s_tableShown = 0;
+    expect(run_ok(first, editor) && s_tableShown && s_tableColumnCount == 2 && s_tableRowCount == 2 &&
+           strcmp(s_tableText, "a|b\n1|x\n2|") == 0,
+           "output.table reaches the Table tab with nil/number/string cells");
+    plugin_host_set_callbacks(NULL);
+    expect(run_fails(first, editor, "not available"), "output.table needs the panel");
+}
+
 static int only_anagrams(const char *scope, const char *name) {
     (void)scope;
     return strcmp(name, "anagrams") == 0;
@@ -3282,6 +3357,7 @@ int main(void) {
     test_sqlite_browser(editor);
     test_spelling(editor);
     test_output_api(editor);
+    test_output_table_api(editor);
     test_anagram_plugin(editor);
     test_secret_message_plugin(editor);
     test_document_personality_plugin(editor);

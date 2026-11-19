@@ -185,7 +185,7 @@ Settings are private to each plugin and persist in `%APPDATA%\tinkeredit\setting
 
 ### app
 
-`app.date()`, `app.time()`, and `app.date_time()` return the local time. `app.version()`, `app.api_version()`, `app.platform()`, `app.memory_used()`, and `app.workspace_path()` expose safe runtime metadata. `app.traceback([message])` builds a Lua stack traceback for protected error handlers. `app.capabilities()` returns named feature flags; API 3 adds `eol_conversion`, `save_encoding`, `tab_width`, `spelling` (the [`spell`](#spell) table) and `output_panel` (the [`output`](#output) table), API 4 adds `context_menu`, API 5 adds the [`problems`](#problems) diagnostics table, API 6 adds `save_and_open`, API 7 adds `configured_runner`, API 8 adds `menu_enabled`, API 9 adds the [`terminal`](#terminal) table and `terminal_panel`, API 10 adds panel-wide clearing and `app.traceback()`, and API 11 adds `relative_file_read` and `editor.read_relative_file()`. `app.defer(milliseconds, fn)` schedules one UI-thread callback (up to 60 seconds) and returns a token accepted by `app.cancel(token)`; it is intended for debouncing and incremental work rather than blocking background computation.
+`app.date()`, `app.time()`, and `app.date_time()` return the local time. `app.version()`, `app.api_version()`, `app.platform()`, `app.memory_used()`, and `app.workspace_path()` expose safe runtime metadata. `app.traceback([message])` builds a Lua stack traceback for protected error handlers. `app.capabilities()` returns named feature flags; API 3 adds `eol_conversion`, `save_encoding`, `tab_width`, `spelling` (the [`spell`](#spell) table) and `output_panel` (the [`output`](#output) table), API 4 adds `context_menu`, API 5 adds the [`problems`](#problems) diagnostics table, API 6 adds `save_and_open`, API 7 adds `configured_runner`, API 8 adds `menu_enabled`, API 9 adds the [`terminal`](#terminal) table and `terminal_panel`, API 10 adds panel-wide clearing and `app.traceback()`, API 11 adds `relative_file_read` and `editor.read_relative_file()`, and API 12 adds `output_table` (the [`output.table`](#output) grid). `app.defer(milliseconds, fn)` schedules one UI-thread callback (up to 60 seconds) and returns a token accepted by `app.cancel(token)`; it is intended for debouncing and incremental work rather than blocking background computation.
 
 ### documents
 
@@ -193,7 +193,7 @@ Settings are private to each plugin and persist in `%APPDATA%\tinkeredit\setting
 
 ### output
 
-These write to the Output tab of the output panel docked under the editor (View → Output Panel), where Run shows a program's output.
+These write to the output panel docked under the editor (View → Output Panel). Most write to its Output tab, where Run shows a program's output; `output.table` has a Table tab of its own.
 
 | Function | Does |
 |---|---|
@@ -201,6 +201,7 @@ These write to the Output tab of the output panel docked under the editor (View 
 | `output.clear()` | Empties the Output tab. |
 | `output.show()` | Opens the panel on the Output tab, without moving the keyboard focus. |
 | `output.report(title, text)` | Appends `text` under a coloured heading naming the report and the document ("Grammar Checker - notes.md"), followed by a blank line, and opens the panel. Tinker Editor's bundled plugins show their longer reports this way. |
+| `output.table(columns, rows)` | Shows `rows` as a sortable grid on the Table tab (click a column header to sort, click again to reverse) and opens the panel on it. `columns` is an array of names; `rows` is an array of tables keyed by those names - the same shape [`db:query`](#sqlite) already returns, so its two results can be passed straight through. A cell is `nil`, a boolean, a number, or a string; numbers sort numerically, everything else sorts as text. Replaces whatever the grid held before. |
 | `output.hide()` | Closes the panel, whichever tab it is showing. Programs running in it keep running. |
 | `output.visible()` | Returns `true` while the panel is open. |
 
@@ -422,7 +423,7 @@ end
 db:close()
 ```
 
-[`examples/sqlite-notes.lua`](examples/sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table, and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
+[`examples/sqlite-notes.lua`](examples/sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table or, with its Show Results as Grid option, a sortable [`output.table`](#output) grid - and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
 
 ### fs
 
@@ -599,6 +600,8 @@ Plugins run in Lua 5.4, built into `tinkeredit.exe`. No separate Lua installatio
 | Parts in a menu or context-menu label | 8 |
 | Top-level menus | 24, including the ones from the menu definition |
 | Items in `ui.choose` | 10,000 |
+| Columns in one `output.table` | 256 |
+| Rows in one `output.table` | 10,000 |
 | Words in one `spell.check` | 50,000 |
 | Text returned by `ui.prompt` | One line, about 4,000 characters |
 | Menu definition nesting | 8 levels, 4,000 items |

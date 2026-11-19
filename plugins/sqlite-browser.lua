@@ -1,6 +1,7 @@
 -- SQLite Browser: open or create any SQLite file, run SQL against it, and
--- see the result as a Markdown table - plus the reverse: read a Markdown
--- table out of the document and load it into a new table in the database.
+-- see the result as a Markdown table, or a sortable grid on the Table tab
+-- (Show Results as Grid) - plus the reverse: read a Markdown table out of
+-- the document and load it into a new table in the database.
 -- Uses the `sqlite` API (see plugins/README.md#sqlite); unlike
 -- examples/sqlite-notes.lua/json-store.lua/yaml-store.lua, this plugin is meant to
 -- point at any database file, not just one of its own, so it asks for a
@@ -99,6 +100,24 @@ local function render_markdown_table(columns, rows)
   return table.concat(lines, "\n")
 end
 
+-- Off by default, so existing Markdown-in-the-Output-tab behaviour doesn't
+-- change underneath anyone; switch it on to see results in a sortable grid
+-- on the Table tab instead.
+menu.checkbox("/Tools/SQLite Browser/Show Results as Grid", "show_grid", false, function(checked)
+  ui.status("SQLite Browser results will show as a " .. (checked and "grid" or "Markdown table"))
+end)
+
+-- note is appended to the Markdown report only - the grid has no equivalent
+-- footer line, since its row count is visible just by looking at it.
+local function show_rows(title, columns, rows, note)
+  if config.get("show_grid", false) then
+    output.table(columns, rows)
+  else
+    local text = render_markdown_table(columns, rows)
+    output.report(title, note and (text .. "\n\n" .. note) or text)
+  end
+end
+
 ----------------------------------------------------------------------
 -- Running SQL (one statement, or several separated by ';')
 ----------------------------------------------------------------------
@@ -193,8 +212,7 @@ local function report_sql_result(db, sql)
     if #result.columns == 0 then
       output.report("SQLite Browser", "The query ran successfully and returned no columns.")
     else
-      output.report("SQLite Browser",
-        render_markdown_table(result.columns, result.rows) .. "\n\n" .. #result.rows .. " row(s).")
+      show_rows("SQLite Browser", result.columns, result.rows, #result.rows .. " row(s).")
     end
   else
     output.report("SQLite Browser", result.changed .. " row(s) affected.")
@@ -238,7 +256,7 @@ menu.add("/Tools/SQLite Browser/Show Tables", function()
       ui.message("This database has no tables yet.", "SQLite Browser")
       return
     end
-    output.report("SQLite Browser: Tables", render_markdown_table(columns, rows))
+    show_rows("SQLite Browser: Tables", columns, rows)
   end)
 end)
 
@@ -262,7 +280,7 @@ menu.add("/Tools/SQLite Browser/Describe Table...", function()
       ui.message("Could not describe '" .. name .. "': " .. tostring(columns), "SQLite Browser", "error")
       return
     end
-    output.report("SQLite Browser: " .. name, render_markdown_table(columns, rows))
+    show_rows("SQLite Browser: " .. name, columns, rows)
   end)
 end)
 

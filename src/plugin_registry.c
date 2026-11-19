@@ -845,7 +845,7 @@ static int app_capabilities(lua_State *L) {
         "documents", "command_execution", "path_picker", "status", "logging", "defer",
         "eol_conversion", "save_encoding", "tab_width", "spelling", "output_panel",
         "context_menu", "problems", "save_and_open", "configured_runner", "menu_enabled",
-        "terminal_panel", "relative_file_read"
+        "terminal_panel", "relative_file_read", "output_table"
     };
     lua_createtable(L, 0, (int)(sizeof(names) / sizeof(names[0])));
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
@@ -1143,9 +1143,68 @@ static int output_visible(lua_State *L) {
     return 1;
 }
 
+/* output.table(columns, rows): a sortable grid on the Table tab. columns is
+   an array of names; rows is an array of tables keyed by those names - the
+   same shape db:query() already returns, so its two results can be passed
+   straight through. */
+static int output_table(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_Integer columnCount = (lua_Integer)lua_rawlen(L, 1);
+    if (columnCount < 1 || columnCount > PLUGIN_MAX_OUTPUT_TABLE_COLUMNS)
+        return luaL_error(L, "output.table needs between 1 and %d columns",
+                          PLUGIN_MAX_OUTPUT_TABLE_COLUMNS);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    lua_Integer rowCount = (lua_Integer)lua_rawlen(L, 2);
+    if (rowCount > PLUGIN_MAX_OUTPUT_TABLE_ROWS)
+        return luaL_error(L, "output.table takes at most %d rows", PLUGIN_MAX_OUTPUT_TABLE_ROWS);
+    if (!s_callbacks.output_table) return luaL_error(L, "output.table is not available here");
+
+    /* Userdata, so the arrays are freed even if a bad row raises an error.
+       Column-name and string-cell pointers stay valid because their tables
+       keep the strings alive (as in ui_choose above); a number cell's text
+       exists only on the stack once converted, so keepAlive anchors it. */
+    const char **columns = (const char **)lua_newuserdatauv(L, (size_t)columnCount * sizeof(*columns), 0);
+    for (lua_Integer i = 0; i < columnCount; i++) {
+        if (lua_rawgeti(L, 1, i + 1) != LUA_TSTRING)
+            return luaL_error(L, "output.table column %d is not a string", (int)(i + 1));
+        columns[i] = checked_cstring(L, -1, "output.table column name");
+        lua_pop(L, 1);
+    }
+    PluginTableCell *cells = (PluginTableCell *)lua_newuserdatauv(
+        L, (size_t)rowCount * (size_t)columnCount * sizeof(*cells), 0);
+    lua_newtable(L);
+    int keepAlive = lua_gettop(L);
+    lua_Integer kept = 0;
+    for (lua_Integer row = 0; row < rowCount; row++) {
+        if (lua_rawgeti(L, 2, row + 1) != LUA_TTABLE)
+            return luaL_error(L, "output.table row %d is not a table", (int)(row + 1));
+        int rowIndex = lua_gettop(L);
+        for (lua_Integer column = 0; column < columnCount; column++) {
+            PluginTableCell *cell = &cells[row * columnCount + column];
+            int type = lua_getfield(L, rowIndex, columns[column]);
+            if (type == LUA_TNUMBER) {
+                cell->number = lua_tonumber(L, -1);
+                cell->isNumber = 1;
+                cell->text = lua_tolstring(L, -1, NULL);
+                lua_seti(L, keepAlive, ++kept); /* anchors the converted string; pops it */
+                continue;
+            }
+            if (type == LUA_TNIL) { cell->text = ""; cell->isNumber = 0; }
+            else if (type == LUA_TBOOLEAN) { cell->text = lua_toboolean(L, -1) ? "true" : "false"; cell->isNumber = 0; }
+            else if (type == LUA_TSTRING) { cell->text = checked_cstring(L, -1, "output.table cell"); cell->isNumber = 0; }
+            else return luaL_error(L, "output.table cell values must be nil, a boolean, a number, or a string");
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); /* the row table */
+    }
+    s_callbacks.output_table(columns, (int)columnCount, cells, (int)rowCount);
+    return 0;
+}
+
 static const luaL_Reg output_functions[] = {
     {"write", output_write}, {"clear", output_clear}, {"show", output_show},
-    {"hide", output_hide}, {"visible", output_visible}, {"report", output_report}, {NULL, NULL}
+    {"hide", output_hide}, {"visible", output_visible}, {"report", output_report},
+    {"table", output_table}, {NULL, NULL}
 };
 
 static int terminal_begin(lua_State *L) {

@@ -10,7 +10,7 @@
    unity build - can name OUTPUT_TAB_DEBUG when starting a debug session.
    Git has its own independently-dockable panel (git_panel.inc), not a tab
    here - see g_hGitPanel. */
-enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG,
+enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBUG, OUTPUT_TAB_TABLE,
       OUTPUT_TAB_COUNT };
 
 /* ---- child control IDs ---- */
@@ -52,6 +52,8 @@ enum { OUTPUT_TAB_RUN, OUTPUT_TAB_TERMINAL, OUTPUT_TAB_PROBLEMS, OUTPUT_TAB_DEBU
 #define ID_MERGE_REFRESH 139
 #define ID_MERGE_SAVE 140
 #define ID_MERGE_CLOSE 141
+#define ID_OUTPUT_TAB_TABLE 142
+#define ID_TABLE_VIEW 143
 
 /* ---- timer IDs ---- */
 #define IDT_PREVIEW_UPDATE 1

@@ -21,7 +21,16 @@
    plugins and modules, and prevents a script from exhausting the process. */
 #define PLUGIN_MEMORY_LIMIT_BYTES (64u * 1024u * 1024u)
 
-#define TINKEREDIT_PLUGIN_API_VERSION 11
+#define TINKEREDIT_PLUGIN_API_VERSION 12
+
+/* One cell of an output.table() grid. text is UTF-8, already validated;
+   isNumber marks a cell that should sort/compare numerically rather than as
+   text (number is only meaningful then). */
+typedef struct {
+    const char *text;
+    int isNumber;
+    double number;
+} PluginTableCell;
 
 /* What the plugin API needs from the application. Any member may be NULL,
    in which case the matching Lua function raises an error. All text is UTF-8. */
@@ -97,6 +106,12 @@ typedef struct {
     void (*output_show)(void);
     void (*output_hide)(void);
     int (*output_visible)(void);
+    /* A sortable grid on the output panel's Table tab, opened the same way
+       output_show opens the Run tab. cells is rowCount * columnCount,
+       row-major; columns/cells are only valid for the call's duration, so
+       the callback must copy whatever it keeps. */
+    void (*output_table)(const char *const *columns, int columnCount,
+                          const PluginTableCell *cells, int rowCount);
     /* An interactive in-process session on the Terminal tab. */
     int (*terminal_begin)(void);
     void (*terminal_write)(const char *text);

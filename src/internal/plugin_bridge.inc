@@ -152,6 +152,10 @@ static void plugin_output_clear(void) { clear_output_pane(&g_outputPanes[OUTPUT_
 static void plugin_output_show(void) { show_output_panel(OUTPUT_TAB_RUN, 0); }
 static void plugin_output_hide(void) { hide_output_panel(); }
 static int plugin_output_visible(void) { return g_outputPanelVisible; }
+static void plugin_output_table(const char *const *columns, int columnCount,
+                                const PluginTableCell *cells, int rowCount) {
+    show_output_table(columns, columnCount, cells, rowCount);
+}
 static int plugin_terminal_begin(void) {
     if (!terminal_view_begin_session(g_terminalView)) return 0;
     plugin_host_set_ctrl_c_interrupt(1);
@@ -795,7 +799,8 @@ static void load_menus_and_plugins(void) {
         .spell_language = plugin_spell_language, .spell_check = plugin_spell_check,
         .output_write = plugin_output_write, .output_clear = plugin_output_clear,
         .output_show = plugin_output_show, .output_hide = plugin_output_hide,
-        .output_visible = plugin_output_visible, .problems_report = plugin_problems_report,
+        .output_visible = plugin_output_visible, .output_table = plugin_output_table,
+        .problems_report = plugin_problems_report,
         .terminal_begin = plugin_terminal_begin, .terminal_write = plugin_terminal_write,
         .terminal_read = plugin_terminal_read, .terminal_clear = plugin_terminal_clear,
         .terminal_end = plugin_terminal_end,
