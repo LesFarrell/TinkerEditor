@@ -2,7 +2,7 @@
 -- see the result as a Markdown table - plus the reverse: read a Markdown
 -- table out of the document and load it into a new table in the database.
 -- Uses the `sqlite` API (see plugins/README.md#sqlite); unlike
--- sqlite-notes.lua/json-store.lua/yaml-store.lua, this plugin is meant to
+-- examples/sqlite-notes.lua/json-store.lua/yaml-store.lua, this plugin is meant to
 -- point at any database file, not just one of its own, so it asks for a
 -- database explicitly rather than picking a folder the first time any
 -- command runs.

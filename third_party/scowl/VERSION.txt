@@ -10,9 +10,9 @@ Sources downloaded:
 The release publishes no checksums or signatures, so these hashes record what
 was downloaded; they could not be checked against upstream values.
 
-Used for: plugins/anagrams/words_en_gb.lua, the British English ("-ise") word
-list for the anagram commands.
-90d0e31d44bacb8c7fb895d65481b7c065d6a100c6e7892391f41e14f8a486a5  plugins/anagrams/words_en_gb.lua
+Used for: plugins/examples/anagrams/words_en_gb.lua, the British English
+("-ise") word list for the anagram commands.
+90d0e31d44bacb8c7fb895d65481b7c065d6a100c6e7892391f41e14f8a486a5  plugins/examples/anagrams/words_en_gb.lua
 
 How it was made (no upstream scripts were run):
 1. Decoded en-common.cwl and en_GB-ise-wo_accents-only.cwl from the Aspell

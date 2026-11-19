@@ -2,7 +2,7 @@
 
 A Tinker Editor plugin is a Lua script that adds commands, menus, and automatic actions to the editor. Plugins can read and change the document, ask simple questions, and show messages. They can't access arbitrary files, start programs, or reach the network, with two narrow, explicit exceptions - see [`sqlite`](#sqlite) and [`fs`](#fs) below. A folder extension can load its own Lua modules through the restricted `require` function.
 
-This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, readability, anagram, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed notes/JSON/YAML stores, a SQLite browser, a wikilink/backlinks notebook, and developer-oriented extensions.
+This guide covers everything a plugin can do. [`example.lua`](example.lua), in this folder, is a working plugin that uses most of it. The `plugins` folder also contains ready-to-use data conversion, JSON, CSV, SQL, CLEF log, number conversion, natural sorting, grammar, spelling report, Lua runner, tail (follow a log file), Markdown structure/link/lint tools, HTML snippets, selection statistics, text, calculator, assembler, Lua formatting, SQLite-backed JSON/YAML stores, a SQLite browser, a wikilink/backlinks notebook, and developer-oriented extensions.
 
 Paths below use `%APPDATA%\tinkeredit`; in portable mode use `portable-data` beside `tinkeredit.exe` instead.
 
@@ -247,7 +247,7 @@ These check words against the Windows spelling dictionary chosen in **View → S
 | `spell.check(word)` | Returns `true` when the dictionary accepts `word`. Text containing several words is accepted only if all of them are. A repeated word isn't a spelling mistake. |
 | `spell.check(words)` | Checks a table of up to 50,000 strings at once and returns a table with one boolean for each. Checking a batch is much faster than checking the words one at a time. |
 
-Both `spell.check` forms raise an error when there's no dictionary. Checking takes about a tenth of a millisecond for each rejected word, spread over the processor's cores, and counts towards the [time limit](#how-commands-run), so check large searches in batches of a few thousand. [`anagrams/init.lua`](anagrams/init.lua) is an example.
+Both `spell.check` forms raise an error when there's no dictionary. Checking takes about a tenth of a millisecond for each rejected word, spread over the processor's cores, and counts towards the [time limit](#how-commands-run), so check large searches in batches of a few thousand. [`examples/anagrams/init.lua`](examples/anagrams/init.lua) is an example.
 
 ### editor
 
@@ -422,7 +422,7 @@ end
 db:close()
 ```
 
-[`sqlite-notes.lua`](sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table, and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
+[`examples/sqlite-notes.lua`](examples/sqlite-notes.lua) is a complete example: a small per-file notes command backed by this API. [`json-store.lua`](json-store.lua) and [`yaml-store.lua`](yaml-store.lua) go further, each keeping a small JSON or YAML codec of its own and using `sqlite` as a named-document store: validate a selection, save it under a key, and read it back later from any document. [`sqlite-browser.lua`](sqlite-browser.lua) uses `db:query`'s column order directly, to run arbitrary SQL against any database file and render the result as a Markdown table, and to do the reverse: read a Markdown table out of the document and load it into a new SQLite table.
 
 ### fs
 
@@ -513,6 +513,8 @@ return {
 - It covers the editor and window. The rendered preview is styled by CSS; use **View → Custom CSS** for that.
 
 [examples/themes.lua](examples/themes.lua) is a complete example: Solarized colours for both themes, built from one function, with in-between shades computed by a small `mix()` helper. Copy it to `%APPDATA%\tinkeredit\themes.lua` to try it. Folders in `plugins` without an `init.lua`, like `examples`, aren't loaded as plugins.
+
+[`examples/secret-message-lab.lua`](examples/secret-message-lab.lua), [`examples/document-personality.lua`](examples/document-personality.lua), [`examples/constraint-writer.lua`](examples/constraint-writer.lua), [`examples/anagrams`](examples/anagrams), and [`examples/sqlite-notes.lua`](examples/sqlite-notes.lua) are complete, working plugins written entirely with the API above. They're kept here, unloaded, as copy-to-try reference rather than bundled commands. Copy one into `%APPDATA%\tinkeredit\plugins` (or `portable-data\plugins` in portable mode) and reload plugins to make it load normally.
 
 ## Customizing the menu bar
 

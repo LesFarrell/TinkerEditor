@@ -85,13 +85,13 @@ support code; a copy of the licence is at
 ## SCOWL 2026.02.25
 
 The anagram plugin's British English word list
-(`plugins/anagrams/words_en_gb.lua`) is generated from
+(`plugins/examples/anagrams/words_en_gb.lua`) is generated from
 [SCOWL](https://github.com/en-wl/wordlist) (Spell Checker Oriented Word
 Lists), copyright 2000–2026 by Kevin Atkinson, which is derived from many
 sources, most of them in the public domain. It is distributed under SCOWL's
 permissive licence, reproduced with the notices for its sources at
 `third_party/scowl/COPYING` and beside the word list at
-`plugins/anagrams/COPYING`. How the list was made, with checksums, is recorded
+`plugins/examples/anagrams/COPYING`. How the list was made, with checksums, is recorded
 in `third_party/scowl/VERSION.txt`.
 
 ## Lua 5.4.9

@@ -1389,7 +1389,6 @@ static void test_bundled_plugins(HWND editor) {
     int editUtf16Be = find_command("/Edit/Convert/En&coding/UTF-16 B&E");
     int editAnsi = find_command("/Edit/Convert/En&coding/&ANSI (system code page)");
     int naturalSort = find_command("/Edit/Convert/Natural Sort Lines Ascending");
-    int anagramWords = find_command("Anagrams (British English)/Words From Letters...");
     int numberHex = find_command("/Tools/Number Converter/To Hexadecimal");
     int numberDecimal = find_command("/Tools/Number Converter/To Decimal");
     int numberRoman = find_command("/Tools/Number Converter/To Roman Numerals");
@@ -1414,20 +1413,6 @@ static void test_bundled_plugins(HWND editor) {
     int grammarFix = find_command("/Tools/Grammar Checker/Fix Safe Issues");
     int grammarLive = find_command("/Tools/Grammar Checker/Live Highlighting");
     int encodingDecode64 = find_command("Encode/Base64 Decode");
-    int rot13 = find_command("Secret Message Lab/ROT13");
-    int atbash = find_command("Secret Message Lab/Atbash");
-    int encodeMorse = find_command("Secret Message Lab/Morse Code/Encode");
-    int decodeMorse = find_command("Secret Message Lab/Morse Code/Decode");
-    int encodeNato = find_command("Secret Message Lab/NATO Phonetics/Encode");
-    int decodeNato = find_command("Secret Message Lab/NATO Phonetics/Decode");
-    int encodeBinary = find_command("Secret Message Lab/Binary/Encode UTF-8");
-    int decodeBinary = find_command("Secret Message Lab/Binary/Decode UTF-8");
-    int pigLatin = find_command("Secret Message Lab/Pig Latin");
-    int personality = find_command("Document Personality/Analyse");
-    int clearPersonality = find_command("Document Personality/Clear Highlights");
-    int checkConstraints = find_command("Constraint Writer/Check Constraints");
-    int highlightConstraints = find_command("Constraint Writer/Highlight Issues");
-    int clearConstraints = find_command("Constraint Writer/Clear Highlights");
     int toc = find_command("/Snippets/Markdown/Table of Contents...");
     int promoteHeading = find_command("/Tools/Markdown/Structure/Promote Heading");
     int renumberLists = find_command("/Tools/Markdown/Structure/Renumber Ordered Lists");
@@ -1455,7 +1440,7 @@ static void test_bundled_plugins(HWND editor) {
            editSortDescending >= 0 && editDedupe >= 0 && editTabs >= 0 && editSpaces >= 0 &&
            editCrlf >= 0 && editLf >= 0 && editCr >= 0 && editUtf8 >= 0 &&
            editUtf8Bom >= 0 && editUtf16Le >= 0 && editUtf16Be >= 0 && editAnsi >= 0 &&
-           naturalSort >= 0 && anagramWords >= 0 &&
+           naturalSort >= 0 &&
            numberHex >= 0 && numberDecimal >= 0 && numberRoman >= 0 &&
            sqlFormat >= 0 && sqlMinify >= 0 && sqlUpper >= 0 && sqlLower >= 0 &&
            removeContaining >= 0 && jsonLinesToArray >= 0 &&
@@ -1464,11 +1449,6 @@ static void test_bundled_plugins(HWND editor) {
            clefLevel >= 0 && clefSearch >= 0 && clefSort >= 0 && clefExceptions >= 0 &&
            grammarCheck >= 0 && grammarHighlight >= 0 && grammarFix >= 0 && grammarLive >= 0 &&
            encodingDecode64 >= 0 &&
-           rot13 >= 0 && atbash >= 0 && encodeMorse >= 0 && decodeMorse >= 0 &&
-           encodeNato >= 0 && decodeNato >= 0 && encodeBinary >= 0 &&
-           decodeBinary >= 0 && pigLatin >= 0 &&
-           personality >= 0 && clearPersonality >= 0 &&
-           checkConstraints >= 0 && highlightConstraints >= 0 && clearConstraints >= 0 &&
            toc >= 0 && promoteHeading >= 0 && renumberLists >= 0 && toggleTasks >= 0 &&
            inlineToReferences >= 0 && referencesToInline >= 0 && lintMarkdown >= 0 &&
            statistics >= 0 && calculator >= 0 && removeBlank >= 0 &&
@@ -1542,11 +1522,6 @@ static void test_bundled_plugins(HWND editor) {
     SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
     expect(run_ok(naturalSort, editor) && document_is(editor, "file1\nfile01\nfile2\nfile10"),
            "natural sort compares embedded digit runs numerically");
-
-    set_document(editor, "tone");
-    SendMessageA(editor, SCI_SETSEL, 0, 4);
-    expect(run_ok(anagramWords, editor) && document_is(editor, "tone"),
-           "anagram word indexing handles the bundled dictionary");
 
     set_document(editor, "255");
     SendMessageA(editor, SCI_SETSEL, 0, 3);
@@ -2169,79 +2144,6 @@ static void test_bundled_plugins(HWND editor) {
     expect(run_ok(jsonUnescape, editor) && document_is(editor, "line 1\n\"line 2\""),
            "bundled JSON plugin unescapes a JSON string");
 
-    set_document(editor, "Hello, World!");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(rot13, editor) && document_is(editor, "Uryyb, Jbeyq!"),
-           "bundled ROT13 transform");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(rot13, editor) && document_is(editor, "Hello, World!"),
-           "bundled ROT13 transform is reversible");
-
-    set_document(editor, "Abc-Z");
-    SendMessageA(editor, SCI_SETSEL, 0, 5);
-    expect(run_ok(atbash, editor) && document_is(editor, "Zyx-A"),
-           "bundled Atbash transform preserves case and punctuation");
-
-    set_document(editor, "SOS 2");
-    SendMessageA(editor, SCI_SETSEL, 0, 5);
-    expect(run_ok(encodeMorse, editor) && document_is(editor, "... --- ... / ..---"),
-           "bundled Morse encoder");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(decodeMorse, editor) && document_is(editor, "SOS 2"),
-           "bundled Morse decoder");
-
-    set_document(editor, "Hi 5");
-    SendMessageA(editor, SCI_SETSEL, 0, 4);
-    expect(run_ok(encodeNato, editor) && document_is(editor, "Hotel India / Five"),
-           "bundled NATO phonetics encoder");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(decodeNato, editor) && document_is(editor, "HI 5"),
-           "bundled NATO phonetics decoder");
-
-    set_document(editor, "Hi!");
-    SendMessageA(editor, SCI_SETSEL, 0, 3);
-    expect(run_ok(encodeBinary, editor) &&
-           document_is(editor, "01001000 01101001 00100001"), "bundled binary encoder");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(decodeBinary, editor) && document_is(editor, "Hi!"),
-           "bundled binary decoder");
-
-    set_document(editor, "Hello, apple and rhythm!");
-    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
-    expect(run_ok(pigLatin, editor) && document_is(editor, "Ellohay, appleway andway rhythmay!"),
-           "bundled Pig Latin transform");
-
-    set_document(editor, "Bright sparks dance! Bright ideas sing! Bright colours shine!");
-    SendMessageA(editor, SCI_SETSEL, 0, 0);
-    s_outputText[0] = 0;
-    s_outputShown = 0;
-    expect(run_ok(personality, editor) && strstr(s_outputText, "Document mood: Enthusiastic") &&
-           strstr(s_outputText, "Favourite word: bright (3 times)") &&
-           strstr(s_outputText, "Document Personality - note.md") && s_outputShown,
-           "bundled document personality reports mood and favourite word in the output panel");
-    int reportsInOutput = find_command("Document Personality/Reports in Output Panel");
-    s_lastMessage[0] = 0;
-    expect(reportsInOutput >= 0 && run_ok(reportsInOutput, editor) && run_ok(personality, editor) &&
-           strstr(s_lastMessage, "Document mood: Enthusiastic") && run_ok(reportsInOutput, editor),
-           "bundled document personality can report in a message box instead");
-    expect(run_ok(clearPersonality, editor), "bundled document personality clears highlights");
-
-    set_document(editor, "Short sentences work. Clear prose helps.");
-    SendMessageA(editor, SCI_SETSEL, 0, 0);
-    s_outputText[0] = 0;
-    expect(run_ok(checkConstraints, editor) &&
-           strstr(s_outputText, "All active constraints are satisfied."),
-           "bundled constraint writer checks its default sentence limit");
-    set_document(editor,
-        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-        "fifteen sixteen seventeen eighteen nineteen twenty twentyone.");
-    s_outputText[0] = 0;
-    expect(run_ok(checkConstraints, editor) &&
-           strstr(s_outputText, "Sentence limit (20 words): 1 too long"),
-           "bundled constraint writer reports a long sentence");
-    expect(run_ok(highlightConstraints, editor) && run_ok(clearConstraints, editor),
-           "bundled constraint writer manages issue highlights");
-
     SendMessageA(editor, SCI_SETEOLMODE, SC_EOL_LF, 0);
     set_document(editor, "# Intro\n\n## Details\n\n```md\n# Hidden\n```");
     SendMessageA(editor, SCI_SETSEL, 0, 0);
@@ -2366,15 +2268,6 @@ static void test_bundled_plugins(HWND editor) {
     expect(run_ok(toUnix, editor) && document_is(editor, "2023-02-29") &&
            strstr(s_lastMessage, "Not a supported ISO 8601 date"),
            "ISO Date to Unix Timestamp rejects a day the month doesn't have");
-
-    int readability = find_command("Document Personality/Readability");
-    set_document(editor, "# Pets\n\nThe cat sat on the mat. It was happy.\n\n```\nnot prose at all\n```");
-    SendMessageA(editor, SCI_SETSEL, 0, 0);
-    s_outputText[0] = 0;
-    expect(readability >= 0 && run_ok(readability, editor) &&
-           strstr(s_outputText, "Flesch reading ease: 110 (very easy)") &&
-           strstr(s_outputText, "Words: 10  |  Sentences: 3  |  Syllables: 11"),
-           "Readability scores prose, with headings as sentences and code left out");
 
     int luaRun = find_command("/Tools/Interpreters/Lua/Run Selection");
     int luaEvaluate = find_command("/Tools/Interpreters/Lua/Evaluate Selection");
@@ -3108,7 +3001,9 @@ static int only_anagrams(const char *scope, const char *name) {
 }
 
 /* The anagram plugin is a folder extension (its word list is a module
-   beside init.lua), so it loads from the bundled folder on its own. */
+   beside init.lua), so it loads from its own folder on its own. It lives
+   under plugins/examples (copy-to-try reference, not bundled by default),
+   so it's loaded from there rather than from plugins/. */
 static void load_anagram_plugin(void) {
     static const PluginHostCallbacks fakes = {
         .prompt = fake_cancel_prompt, .choose = fake_spell_choose, .message = fake_message,
@@ -3117,7 +3012,7 @@ static void load_anagram_plugin(void) {
     };
     plugin_host_set_callbacks(&fakes);
     plugin_host_shutdown();
-    char *error = plugin_host_load_directory(L"plugins", "bundled");
+    char *error = plugin_host_load_directory(L"plugins\\examples", "bundled");
     if (error) fprintf(stderr, "%s\n", error);
     expect(error == NULL, "anagrams loads as a folder extension");
     free(error);
@@ -3182,6 +3077,162 @@ static void test_anagram_plugin(HWND editor) {
     plugin_host_shutdown();
 }
 
+/* secret-message-lab.lua, document-personality.lua and constraint-writer.lua
+   moved from plugins/ to plugins/examples (copy-to-try reference, not
+   bundled by default), so - like the anagram plugin above - each is loaded
+   from there on its own, the same way load_spelling_plugin loads a single
+   bundled file by name. */
+static void load_example_plugin(const WCHAR *path, const char *name,
+                                 const PluginHostCallbacks *fakes) {
+    plugin_host_set_callbacks(fakes);
+    plugin_host_shutdown();
+    size_t length = 0;
+    char *code = read_utf8_text_file_length(path, 1024 * 1024, &length);
+    expect(code != NULL, name);
+    if (!code) return;
+    char *error = plugin_host_load_chunk(name, code, length);
+    free(code);
+    if (error) fprintf(stderr, "%s\n", error);
+    expect(error == NULL, name);
+    free(error);
+}
+
+static void test_secret_message_plugin(HWND editor) {
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .message = fake_message,
+    };
+    load_example_plugin(L"plugins\\examples\\secret-message-lab.lua", "secret-message-lab.lua", &fakes);
+
+    int rot13 = find_command("Secret Message Lab/ROT13");
+    int atbash = find_command("Secret Message Lab/Atbash");
+    int encodeMorse = find_command("Secret Message Lab/Morse Code/Encode");
+    int decodeMorse = find_command("Secret Message Lab/Morse Code/Decode");
+    int encodeNato = find_command("Secret Message Lab/NATO Phonetics/Encode");
+    int decodeNato = find_command("Secret Message Lab/NATO Phonetics/Decode");
+    int encodeBinary = find_command("Secret Message Lab/Binary/Encode UTF-8");
+    int decodeBinary = find_command("Secret Message Lab/Binary/Decode UTF-8");
+    int pigLatin = find_command("Secret Message Lab/Pig Latin");
+    expect(rot13 >= 0 && atbash >= 0 && encodeMorse >= 0 && decodeMorse >= 0 &&
+           encodeNato >= 0 && decodeNato >= 0 && encodeBinary >= 0 &&
+           decodeBinary >= 0 && pigLatin >= 0,
+           "secret message lab commands are registered");
+
+    set_document(editor, "Hello, World!");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(rot13, editor) && document_is(editor, "Uryyb, Jbeyq!"),
+           "bundled ROT13 transform");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(rot13, editor) && document_is(editor, "Hello, World!"),
+           "bundled ROT13 transform is reversible");
+
+    set_document(editor, "Abc-Z");
+    SendMessageA(editor, SCI_SETSEL, 0, 5);
+    expect(run_ok(atbash, editor) && document_is(editor, "Zyx-A"),
+           "bundled Atbash transform preserves case and punctuation");
+
+    set_document(editor, "SOS 2");
+    SendMessageA(editor, SCI_SETSEL, 0, 5);
+    expect(run_ok(encodeMorse, editor) && document_is(editor, "... --- ... / ..---"),
+           "bundled Morse encoder");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(decodeMorse, editor) && document_is(editor, "SOS 2"),
+           "bundled Morse decoder");
+
+    set_document(editor, "Hi 5");
+    SendMessageA(editor, SCI_SETSEL, 0, 4);
+    expect(run_ok(encodeNato, editor) && document_is(editor, "Hotel India / Five"),
+           "bundled NATO phonetics encoder");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(decodeNato, editor) && document_is(editor, "HI 5"),
+           "bundled NATO phonetics decoder");
+
+    set_document(editor, "Hi!");
+    SendMessageA(editor, SCI_SETSEL, 0, 3);
+    expect(run_ok(encodeBinary, editor) &&
+           document_is(editor, "01001000 01101001 00100001"), "bundled binary encoder");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(decodeBinary, editor) && document_is(editor, "Hi!"),
+           "bundled binary decoder");
+
+    set_document(editor, "Hello, apple and rhythm!");
+    SendMessageA(editor, SCI_SETSEL, 0, SendMessageA(editor, SCI_GETLENGTH, 0, 0));
+    expect(run_ok(pigLatin, editor) && document_is(editor, "Ellohay, appleway andway rhythmay!"),
+           "bundled Pig Latin transform");
+    plugin_host_shutdown();
+}
+
+static void test_document_personality_plugin(HWND editor) {
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .message = fake_message, .file_path = fake_file_path,
+        .config_get = fake_config_get, .config_set = fake_config_set,
+        .output_write = fake_output_write, .output_show = fake_output_show,
+    };
+    load_example_plugin(L"plugins\\examples\\document-personality.lua", "document-personality.lua", &fakes);
+
+    int personality = find_command("Document Personality/Analyse");
+    int clearPersonality = find_command("Document Personality/Clear Highlights");
+    int readability = find_command("Document Personality/Readability");
+    expect(personality >= 0 && clearPersonality >= 0 && readability >= 0,
+           "document personality commands are registered");
+
+    set_document(editor, "Bright sparks dance! Bright ideas sing! Bright colours shine!");
+    SendMessageA(editor, SCI_SETSEL, 0, 0);
+    s_outputText[0] = 0;
+    s_outputShown = 0;
+    expect(run_ok(personality, editor) && strstr(s_outputText, "Document mood: Enthusiastic") &&
+           strstr(s_outputText, "Favourite word: bright (3 times)") &&
+           strstr(s_outputText, "Document Personality - note.md") && s_outputShown,
+           "bundled document personality reports mood and favourite word in the output panel");
+    int reportsInOutput = find_command("Document Personality/Reports in Output Panel");
+    s_lastMessage[0] = 0;
+    expect(reportsInOutput >= 0 && run_ok(reportsInOutput, editor) && run_ok(personality, editor) &&
+           strstr(s_lastMessage, "Document mood: Enthusiastic") && run_ok(reportsInOutput, editor),
+           "bundled document personality can report in a message box instead");
+    expect(run_ok(clearPersonality, editor), "bundled document personality clears highlights");
+
+    set_document(editor, "# Pets\n\nThe cat sat on the mat. It was happy.\n\n```\nnot prose at all\n```");
+    SendMessageA(editor, SCI_SETSEL, 0, 0);
+    s_outputText[0] = 0;
+    expect(run_ok(readability, editor) &&
+           strstr(s_outputText, "Flesch reading ease: 110 (very easy)") &&
+           strstr(s_outputText, "Words: 10  |  Sentences: 3  |  Syllables: 11"),
+           "Readability scores prose, with headings as sentences and code left out");
+    plugin_host_shutdown();
+}
+
+static void test_constraint_writer_plugin(HWND editor) {
+    static const PluginHostCallbacks fakes = {
+        .prompt = fake_prompt, .message = fake_message,
+        .config_get = fake_config_get, .config_set = fake_config_set,
+        .output_write = fake_output_write, .output_show = fake_output_show,
+        .problems_report = fake_problems_report,
+    };
+    load_example_plugin(L"plugins\\examples\\constraint-writer.lua", "constraint-writer.lua", &fakes);
+
+    int checkConstraints = find_command("Constraint Writer/Check Constraints");
+    int highlightConstraints = find_command("Constraint Writer/Highlight Issues");
+    int clearConstraints = find_command("Constraint Writer/Clear Highlights");
+    expect(checkConstraints >= 0 && highlightConstraints >= 0 && clearConstraints >= 0,
+           "constraint writer commands are registered");
+
+    set_document(editor, "Short sentences work. Clear prose helps.");
+    SendMessageA(editor, SCI_SETSEL, 0, 0);
+    s_outputText[0] = 0;
+    expect(run_ok(checkConstraints, editor) &&
+           strstr(s_outputText, "All active constraints are satisfied."),
+           "bundled constraint writer checks its default sentence limit");
+    set_document(editor,
+        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+        "fifteen sixteen seventeen eighteen nineteen twenty twentyone.");
+    s_outputText[0] = 0;
+    expect(run_ok(checkConstraints, editor) &&
+           strstr(s_outputText, "Sentence limit (20 words): 1 too long"),
+           "bundled constraint writer reports a long sentence");
+    expect(run_ok(highlightConstraints, editor) && run_ok(clearConstraints, editor),
+           "bundled constraint writer manages issue highlights");
+    plugin_host_shutdown();
+}
+
 int main(void) {
     /* Resolve the DLL relative to this executable, including Premake builds. */
     WCHAR path[MAX_PATH];
@@ -3232,6 +3283,9 @@ int main(void) {
     test_spelling(editor);
     test_output_api(editor);
     test_anagram_plugin(editor);
+    test_secret_message_plugin(editor);
+    test_document_personality_plugin(editor);
+    test_constraint_writer_plugin(editor);
     test_spelling_report(editor);
     test_grammar_languages(editor);
     plugin_host_shutdown();
