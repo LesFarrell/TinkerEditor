@@ -23,7 +23,6 @@ local M = {}
 -- (Begin library implementation)
 
 local io_open = io.open
-local os_time = os.time
 local os_date = os.date
 local tostring = tostring
 local type = type
@@ -76,6 +75,18 @@ local function u64(n)
     return u32(lo) .. u32(hi)
 end
 
+-- Read little-endian unsigned integers from a byte string.
+local function le16(s, i)
+    i = i or 1
+    return (s:byte(i) or 0) + (s:byte(i+1) or 0) * 256
+end
+
+local function le32(s, i)
+    i = i or 1
+    return (s:byte(i) or 0) + (s:byte(i+1) or 0) * 256
+        + (s:byte(i+2) or 0) * 65536 + (s:byte(i+3) or 0) * 16777216
+end
+
 -- Decode a little-endian 64-bit integer from a string.
 --
 -- Args:
@@ -83,7 +94,13 @@ end
 --   i (number): 1-based index in s where the 8-byte value starts.
 -- Returns:
 --   (number) decoded integer (may lose precision > 2^53).
---
+local function le64(s, i)
+    i = i or 1
+    local lo = le32(s, i)
+    local hi = le32(s, i+4)
+    return lo + hi * 4294967296
+end
+
 local MAX32 = 0xFFFFFFFF
 local MAX16 = 0xFFFF
 
@@ -135,7 +152,7 @@ local function dos_datetime(t)
 end
 
 -- CRC32 helpers
--- Build the CRC32 lookup table used by crc32/crc_update.
+-- Build the CRC32 lookup table used by crc32.
 -- Returns a table of 256 entries for byte-wise CRC calculation.
 --
 -- This is executed once during module load; the resulting table is used
@@ -176,47 +193,6 @@ local function crc32(data)
     return (crc ~ 0xFFFFFFFF) & 0xFFFFFFFF
 end
 
--- Incrementally update a CRC32 value with another chunk of data.
---
--- Args:
---   crc (number|nil): previous crc value, or nil to start a new CRC.
---   data (string): additional bytes to update the CRC with.
--- Returns:
---   (number) updated CRC32 accumulator (still in internal pre-finalized form).
---
--- The returned value is in the internal (pre-XOR) form so callers can
--- feed multiple chunks and finalize with `crc ~ 0xFFFFFFFF`.
-local function crc_update(crc, data)
-    crc = crc or 0xFFFFFFFF
-    for i = 1, #data do
-        local b = data:byte(i)
-        crc = (__crc_table[(crc ~ b) & 0xFF] ~ (crc >> 8)) & 0xFFFFFFFF
-    end
-    return crc
-end
-
--- Bit ops fallback (keeps use of native operators where available)
-local has_bit = (bit32 ~= nil) or (jit and jit.bit) or false
-local function bor(a,b) return (a|b) end
-local function band(a,b) return (a&b) end
-local function bxor(a,b) return (a~b) end
-local function rshift(a,b) return (a>>b) end
-local function lshift(a,b) return (a<<b) end
-do
-    local ok = pcall(function() local _ = 1 & 1 end)
-    if not ok then
-        if bit32 then
-            bor = bit32.bor; band = bit32.band; bxor = bit32.bxor; rshift = bit32.rshift; lshift = bit32.lshift
-        else
-            bor = function(a,b) return a + b end
-            band = function(a,b) return a % 256 end
-            bxor = function(a,b) return a + b end
-            rshift = function(a,b) return math.floor(a / 2^b) end
-            lshift = function(a,b) return a * 2^b end
-        end
-    end
-end
-
 -- deflate fixed literals and deflate_lz77, inflate_deflate, and all other helpers
 -- (For brevity here we re-use the same implementations as before.)
 
@@ -250,6 +226,11 @@ local function deflate_fixed_literals(data)
             emit_bit(bit)
         end
     end
+    local function emit_code(val, n)
+        for i = n-1, 0, -1 do
+            emit_bit(math.floor(val / (2 ^ i)) % 2)
+        end
+    end
     local function fixed_code(sym)
         if sym >= 0 and sym <= 143 then
             return sym + 48, 8
@@ -266,10 +247,10 @@ local function deflate_fixed_literals(data)
     for i = 1, #data do
         local sym = data:byte(i)
         local code, l = fixed_code(sym)
-        emit_bits(code, l)
+        emit_code(code, l)
     end
     local code, l = fixed_code(256)
-    emit_bits(code, l)
+    emit_code(code, l)
     if bitlen > 0 then table.insert(out, string.char(bitbuf)) end
     return table.concat(out)
 end
@@ -309,6 +290,11 @@ local function deflate_lz77(data, level)
         for i = 0, n-1 do
             local bit = math.floor(val / (2 ^ i)) % 2
             emit_bit(bit)
+        end
+    end
+    local function emit_code(val, n)
+        for i = n-1, 0, -1 do
+            emit_bit(math.floor(val / (2 ^ i)) % 2)
         end
     end
     local length_base = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258}
@@ -363,13 +349,13 @@ local function deflate_lz77(data, level)
             while li <= #length_base and not (len >= length_base[li] and (li == #length_base or len < length_base[li+1])) do li = li + 1 end
             local code = 256 + li
             local codeval, codelen = fixed_code(code)
-            emit_bits(codeval, codelen)
+            emit_code(codeval, codelen)
             local extra = len - length_base[li]
             if length_extra[li] and length_extra[li] > 0 then emit_bits(extra, length_extra[li]) end
             local dist = best_dist
             local di = 1
             while di <= #dist_base and not (dist >= dist_base[di] and (di == #dist_base or dist < dist_base[di+1])) do di = di + 1 end
-            emit_bits(di-1, 5)
+            emit_code(di-1, 5)
             local dext = dist - dist_base[di]
             if dist_extra[di] and dist_extra[di] > 0 then emit_bits(dext, dist_extra[di]) end
             for k = 0, best_len-1 do add_head(i + k) end
@@ -377,13 +363,13 @@ local function deflate_lz77(data, level)
         else
             local sym = data:byte(i)
             local codeval, codelen = fixed_code(sym)
-            emit_bits(codeval, codelen)
+            emit_code(codeval, codelen)
             add_head(i)
             i = i + 1
         end
     end
     local codeval, codelen = fixed_code(256)
-    emit_bits(codeval, codelen)
+    emit_code(codeval, codelen)
     if bitlen > 0 then table.insert(out, string.char(bitbuf)) end
     return table.concat(out)
 end
@@ -419,11 +405,10 @@ local fixed_table = build_fixed_decode()
 local function BitReader(data)
     local o = {data = data, pos = 1, bitbuf = 0, bitlen = 0}
     local function fill(self)
-        if self.pos <= #self.data then
-            self.bitbuf = self.bitbuf + ((self.data:byte(self.pos) or 0) * (2 ^ self.bitlen))
-            self.bitlen = self.bitlen + 8
-            self.pos = self.pos + 1
-        end
+        if self.pos > #self.data then error('unexpected end of deflate stream', 0) end
+        self.bitbuf = self.bitbuf + ((self.data:byte(self.pos) or 0) * (2 ^ self.bitlen))
+        self.bitlen = self.bitlen + 8
+        self.pos = self.pos + 1
     end
     function o:read_bits(n)
         while self.bitlen < n do fill(self) end
@@ -446,12 +431,18 @@ end
 local function decode_fixed_symbol(br)
     local acc = 0
     for l = 1, 9 do
-        local b = br:read_bit()
-        acc = acc + (b * (2 ^ (l-1)))
+        acc = acc * 2 + br:read_bit()
         local t = fixed_table[l]
         if t and t[acc] then return t[acc] end
     end
     return nil, 'invalid symbol'
+end
+
+-- Read a fixed-width Huffman code (MSB-first) such as the 5-bit distance code.
+local function read_code(br, n)
+    local v = 0
+    for _ = 1, n do v = v * 2 + br:read_bit() end
+    return v
 end
 
 -- Inflate a DEFLATE compressed byte string. Supports stored blocks and
@@ -467,105 +458,61 @@ end
 -- with literal/length & distance pairs. It is not a full-featured DEFLATE
 -- implementation but is sufficient for library tests and round-trips.
 local function inflate_deflate(data)
-    local br = BitReader(data)
-    local out = {}
-    local length_base = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258}
-    local length_extra = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0}
-    local dist_base = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577}
-    local dist_extra = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13}
-    while true do
-        local bfinal = br:read_bit()
-        local btype = br:read_bits(2)
-        if btype == 0 then
-            while br.bitlen % 8 ~= 0 do br:read_bit() end
-            local lo = br:read_bits(8); local hi = br:read_bits(8)
-            local len = lo + hi * 256
-            local nlo = br:read_bits(8); local nhi = br:read_bits(8)
-            local nlen = nlo + nhi * 256
-            if (len ~ nlen) ~= 0xFFFF then return nil, 'stored len mismatch' end
-            for i = 1, len do table.insert(out, string.char(br:read_bits(8))) end
-        elseif btype == 1 then
-            while true do
-                local sym = decode_fixed_symbol(br)
-                if not sym then return nil, 'decode error' end
-                if sym < 256 then table.insert(out, string.char(sym))
-                elseif sym == 256 then break
-                else
-                    local lenidx = sym - 256
-                    local lb = length_base[lenidx]
-                    local le = length_extra[lenidx]
-                    local extra = 0
-                    if le and le > 0 then extra = br:read_bits(le) end
-                    local length = lb + extra
-                    local distbits = br:read_bits(5)
-                    local dist = dist_base[distbits+1]
-                    local de = dist_extra[distbits+1]
-                    local dext = 0
-                    if de and de > 0 then dext = br:read_bits(de) end
-                    dist = dist + dext
-                    local outlen = #out
-                    for k = 1, length do
-                        local pos = outlen - dist + k
-                        if pos < 1 then return nil, 'dist out of range' end
-                        table.insert(out, out[pos])
+    local function inflate()
+        local br = BitReader(data)
+        local out = {}
+        local length_base = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258}
+        local length_extra = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0}
+        local dist_base = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577}
+        local dist_extra = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13}
+        while true do
+            local bfinal = br:read_bit()
+            local btype = br:read_bits(2)
+            if btype == 0 then
+                while br.bitlen % 8 ~= 0 do br:read_bit() end
+                local lo = br:read_bits(8); local hi = br:read_bits(8)
+                local len = lo + hi * 256
+                local nlo = br:read_bits(8); local nhi = br:read_bits(8)
+                local nlen = nlo + nhi * 256
+                if (len ~ nlen) ~= 0xFFFF then return nil, 'stored len mismatch' end
+                for i = 1, len do table.insert(out, string.char(br:read_bits(8))) end
+            elseif btype == 1 then
+                while true do
+                    local sym = decode_fixed_symbol(br)
+                    if not sym then return nil, 'decode error' end
+                    if sym < 256 then table.insert(out, string.char(sym))
+                    elseif sym == 256 then break
+                    else
+                        local lenidx = sym - 256
+                        local lb = length_base[lenidx]
+                        local le = length_extra[lenidx]
+                        local extra = 0
+                        if le and le > 0 then extra = br:read_bits(le) end
+                        local length = lb + extra
+                        local distbits = read_code(br, 5)
+                        local dist = dist_base[distbits+1]
+                        local de = dist_extra[distbits+1]
+                        local dext = 0
+                        if de and de > 0 then dext = br:read_bits(de) end
+                        dist = dist + dext
+                        local outlen = #out
+                        for k = 1, length do
+                            local pos = outlen - dist + k
+                            if pos < 1 then return nil, 'dist out of range' end
+                            table.insert(out, out[pos])
+                        end
                     end
                 end
+            else
+                return nil, 'unsupported BTYPE'
             end
-        else
-            return nil, 'unsupported BTYPE'
+            if bfinal == 1 then break end
         end
-        if bfinal == 1 then break end
+        return table.concat(out)
     end
-    return table.concat(out)
-end
-
--- helper read le16/le32
--- Read a little-endian 16-bit unsigned integer from string `s` at index `i`.
---
--- Args:
---   s (string): source bytes.
---   i (number): 1-based index into s.
--- Returns:
---   (number) decoded 16-bit integer.
-local function le16(s, i)
-    i = i or 1
-    local a = s:byte(i) or 0
-    local b = s:byte(i+1) or 0
-    return a + b * 256
-end
--- Read a little-endian 32-bit unsigned integer from string `s` at index `i`.
---
--- Args:
---   s (string): source bytes.
---   i (number): 1-based index into s.
--- Returns:
---   (number) decoded 32-bit integer.
-local function le32(s, i)
-    i = i or 1
-    local a = s:byte(i) or 0
-    local b = s:byte(i+1) or 0
-    local c = s:byte(i+2) or 0
-    local d = s:byte(i+3) or 0
-    return a + b * 256 + c * 65536 + d * 16777216
-end
-
--- Read a little-endian 64-bit unsigned integer from string `s` at index `i`.
---
--- Args:
---   s (string): byte string containing the value.
---   i (number): 1-based index in s where the 8-byte value starts.
--- Returns:
---   (number) decoded integer (may lose precision > 2^53).
---
--- Uses le32 to reconstruct the low/high 32-bit halves. Must come after le32
--- is declared above it (as a local), not before: a `local function` earlier
--- in the file that calls `le32` would resolve to the global le32, which is
--- never assigned.
-local function le64(s, i)
-    i = i or 1
-    local lo = le32(s, i)
-    local hi = le32(s, i+4)
-    return lo + hi * 4294967296
+    local ok, result, err = pcall(inflate)
+    if not ok then return nil, tostring(result) end
+    return result, err
 end
 
 -- find_eocd_and_zip64
@@ -683,12 +630,13 @@ local function unzip_file(zip_path, out_dir)
     end
     local function sanitize_name(n)
         n = n or ''
-        n = n:gsub('^/*', '')
-        n = n:gsub('^%a:[\\/]+', '')
+        n = n:gsub('\\', '/')
+        n = n:gsub('^%a:', '')
+        n = n:gsub('^/+', '')
         local parts = {}
         for part in n:gmatch('[^/]+') do
             if part == '..' then if #parts > 0 then table.remove(parts) end
-            elseif part ~= '.' and part ~= '' then table.insert(parts, part) end
+            elseif part ~= '.' and part ~= '' and not part:match('^%a:') then table.insert(parts, part) end
         end
         return table.concat(parts, '/')
     end
@@ -713,15 +661,16 @@ local function unzip_file(zip_path, out_dir)
         if e.method == 0 then outdata = data or ''
         elseif e.method == 8 then outdata, oerr = inflate_deflate(data); if not outdata then f:close(); return nil, oerr end
         else f:close(); return nil, 'unsupported method '..tostring(e.method) end
-        if e.name:sub(-1) ~= '/' then
+        if e.name:sub(-1) == '/' or e.name:sub(-1) == '\\' then
+            make_dir(full)
+        else
+            local got = crc32(outdata)
+            if got ~= e.crc then f:close(); return nil, string.format('CRC mismatch for %s: expected %08X got %08X', e.name, e.crc, got) end
+            if #outdata ~= e.size then f:close(); return nil, string.format('size mismatch for %s: expected %d got %d', e.name, e.size, #outdata) end
             local wf, werr = io_open(full, 'wb')
             if not wf then f:close(); return nil, werr end
             wf:write(outdata)
             wf:close()
-            local got = crc32(outdata)
-            if got ~= e.crc then f:close(); return nil, string.format('CRC mismatch for %s: expected %08X got %08X', e.name, e.crc, got) end
-        else
-            make_dir(full)
         end
         ::continue::
     end
@@ -753,6 +702,15 @@ end
 function ZipWriter:_write(s)
     self.f:write(s)
     self.offset = self.offset + #s
+end
+
+-- Patch the compression method in a local header that has already been
+-- written, restoring the file position afterwards.
+function ZipWriter:_set_local_method(offset, method)
+    local end_pos = self.f:seek('end')
+    self.f:seek('set', offset + 8)
+    self.f:write(u16(method))
+    self.f:seek('set', end_pos)
 end
 
 -- Add a file from the filesystem into the archive under `arcname`.
@@ -808,15 +766,7 @@ function ZipWriter:add_data(name, data, modtime)
     local comp_size = size
     if self.compress or self.force_deflate then
         local comp = deflate_lz77(data, self.level)
-    -- debug (controlled by module flag)
-    if M and M.debug and io and io.stderr and io.stderr.write then io.stderr:write(string.format('DEBUG add_data: name=%s compress=%s force_deflate=%s complen=%d\n', tostring(name), tostring(self.compress), tostring(self.force_deflate), comp and #comp or 0)) end
-        if comp and #comp > 0 then
-            outdata = comp; comp_size = #outdata; method = 8
-        elseif self.force_deflate then
-            -- Force DEFLATE even if compression yields no savings: use fixed-literal block as fallback
-            if not comp or #comp == 0 then
-                comp = deflate_fixed_literals(data)
-            end
+        if comp and (#comp < size or self.force_deflate) then
             outdata = comp; comp_size = #outdata; method = 8
         end
     end
@@ -833,10 +783,11 @@ function ZipWriter:add_data(name, data, modtime)
     local cd_offset = header_offset
     if comp_size > MAX32 or size > MAX32 or header_offset > MAX32 then
         local zbuf = {}
-        if size > MAX32 then table.insert(zbuf, u64(size)) else table.insert(zbuf, u64(0)) end
-        if comp_size > MAX32 then table.insert(zbuf, u64(comp_size)) else table.insert(zbuf, u64(0)) end
-        if header_offset > MAX32 then table.insert(zbuf, u64(header_offset)) else table.insert(zbuf, u64(0)) end
-        extra = string.char(0x01,0x00) .. u16(#table.concat(zbuf)) .. table.concat(zbuf)
+        if size > MAX32 then table.insert(zbuf, u64(size)) end
+        if comp_size > MAX32 then table.insert(zbuf, u64(comp_size)) end
+        if header_offset > MAX32 then table.insert(zbuf, u64(header_offset)) end
+        local payload = table.concat(zbuf)
+        extra = string.char(0x01,0x00) .. u16(#payload) .. payload
         cd_comp_size = math.min(comp_size, MAX32)
         cd_size = math.min(size, MAX32)
         cd_offset = math.min(header_offset, MAX32)
@@ -885,38 +836,6 @@ function ZipWriter:close()
     return true
 end
 
--- enumerate helpers
-local function is_windows()
-    return package.config:sub(1,1) == '\\'
-end
-local function file_exists(path)
-    local f = io_open(path, 'rb')
-    if f then f:close(); return true end
-    return false
-end
-local function make_dir(path)
-    if path == '' then return true end
-    if is_windows() then return os.execute('mkdir ' .. shell_quote(path) .. ' > nul 2>&1') else return os.execute('mkdir -p ' .. shell_quote(path)) end
-end
-local function le16_local(s, i)
-    i = i or 1
-    local a = s:byte(i) or 0
-    local b = s:byte(i+1) or 0
-    return a + b * 256
-end
-local function le32_local(s, i)
-    i = i or 1
-    local a = s:byte(i) or 0
-    local b = s:byte(i+1) or 0
-    local c = s:byte(i+2) or 0
-    local d = s:byte(i+3) or 0
-    return a + b * 256 + c * 65536 + d * 16777216
-end
-
--- re-use earlier unzip implementation's dependency on le16/le32 names
--- simple re-assign
-le16 = le16_local; le32 = le32_local; make_dir = make_dir; file_exists = file_exists
-
 -- Streaming and rest functions (start_file_stream, write_chunk, finish_file_stream, add_tree)
 -- Start streaming a file into the archive. Call `write_chunk` repeatedly
 -- then `finish_file_stream` to finalize the entry. Streaming allows large
@@ -929,17 +848,11 @@ le16 = le16_local; le32 = le32_local; make_dir = make_dir; file_exists = file_ex
 function ZipWriter:start_file_stream(name)
     name = zip_path(name)
     local dos_time, dos_date = dos_datetime(os_date('*t'))
-    local local_header = table.concat{string.char(0x50,0x4b,0x03,0x04), u16(20), u16(0x08), u16(0), dos_time, dos_date, u32(0), u32(0), u32(0), u16(#name), u16(0), name}
     local header_offset = self.offset
+    local method = (self.compress or self.force_deflate) and 8 or 0
+    local local_header = table.concat{string.char(0x50,0x4b,0x03,0x04), u16(20), u16(0x08), u16(method), dos_time, dos_date, u32(0), u32(0), u32(0), u16(#name), u16(0), name}
     self:_write(local_header)
-    self._stream = {name = name, offset = header_offset, crc = 0xFFFFFFFF, size = 0, method = 0}
-    if self.compress or self.force_deflate then
-        self._stream.method = 8
-        local buffer = {}
-        local function feed(chunk) table.insert(buffer, chunk); return '' end
-        local function finish() return deflate_lz77(table.concat(buffer), self.level) end
-        self._stream._feed = feed; self._stream._finish = finish
-    end
+    self._stream = {name = name, offset = header_offset, crc = 0xFFFFFFFF, size = 0, method = method, dos_time = dos_time, dos_date = dos_date, _raw = (method == 8) and {} or nil}
     return true
 end
 
@@ -958,7 +871,7 @@ function ZipWriter:write_chunk(chunk)
     end
     self._stream.crc = crc
     self._stream.size = self._stream.size + #chunk
-    if self._stream.method == 8 then self._stream._feed(chunk) else self:_write(chunk) end
+    if self._stream._raw then table.insert(self._stream._raw, chunk) else self:_write(chunk) end
     return true
 end
 
@@ -971,30 +884,42 @@ function ZipWriter:finish_file_stream()
     if not self._stream then return nil, 'no active stream' end
     local crc = (self._stream.crc ~ 0xFFFFFFFF) & 0xFFFFFFFF
     local size = self._stream.size
-    local comp_size = size
     local header_offset = self._stream.offset
-    if self._stream.method == 8 then local comp = self._stream._finish(); comp_size = #comp; self:_write(comp) end
+    local method = self._stream.method
+    local outdata = ''
+    if self._stream._raw then
+        local raw = table.concat(self._stream._raw)
+        local comp = deflate_lz77(raw, self.level)
+        if comp and (#comp < size or self.force_deflate) then
+            method = 8
+            outdata = comp
+        else
+            method = 0
+            outdata = raw
+        end
+        if method ~= self._stream.method then self:_set_local_method(header_offset, method) end
+    end
+    local comp_size = #outdata
+    self:_write(outdata)
     local desc = table.concat{string.char(0x50,0x4b,0x07,0x08), u32(crc), u32(comp_size), u32(size)}
     self:_write(desc)
-    local dos_time, dos_date = dos_datetime(os_date('*t'))
     local extra = ''
     local cd_comp_size = comp_size
     local cd_size = size
     local cd_offset = header_offset
     if comp_size > MAX32 or size > MAX32 or header_offset > MAX32 then
         local zbuf = {}
-        if size > MAX32 then table.insert(zbuf, u64(size)) else table.insert(zbuf, u64(0)) end
-        if comp_size > MAX32 then table.insert(zbuf, u64(comp_size)) else table.insert(zbuf, u64(0)) end
-        if header_offset > MAX32 then table.insert(zbuf, u64(header_offset)) else table.insert(zbuf, u64(0)) end
-        extra = string.char(0x01,0x00) .. u16(#table.concat(zbuf)) .. table.concat(zbuf)
+        if size > MAX32 then table.insert(zbuf, u64(size)) end
+        if comp_size > MAX32 then table.insert(zbuf, u64(comp_size)) end
+        if header_offset > MAX32 then table.insert(zbuf, u64(header_offset)) end
+        local payload = table.concat(zbuf)
+        extra = string.char(0x01,0x00) .. u16(#payload) .. payload
         cd_comp_size = math.min(comp_size, MAX32)
         cd_size = math.min(size, MAX32)
         cd_offset = math.min(header_offset, MAX32)
     end
-    local method = self._stream.method or 0
-    local ver_made = 20; local ver_needed = 20
-    if #extra > 0 then ver_made = 45; ver_needed = 45 end
-    local central = table.concat{string.char(0x50,0x4b,0x01,0x02), u16(ver_made), u16(ver_needed), u16(0x08), u16(method), dos_time, dos_date, u32(crc), u32(cd_comp_size), u32(cd_size), u16(#self._stream.name), u16(#extra), u16(0), u16(0), u16(0), u32(0), u32(cd_offset), self._stream.name, extra}
+    local ver = (#extra > 0) and 45 or 20
+    local central = table.concat{string.char(0x50,0x4b,0x01,0x02), u16(ver), u16(ver), u16(0x08), u16(method), self._stream.dos_time, self._stream.dos_date, u32(crc), u32(cd_comp_size), u32(cd_size), u16(#self._stream.name), u16(#extra), u16(0), u16(0), u16(0), u32(0), u32(cd_offset), self._stream.name, extra}
     table.insert(self.entries, central)
     self._stream = nil
     return true
@@ -1111,6 +1036,7 @@ end
 local function zip_dir(out_zip, src_dir, opts)
     opts = opts or {}
     if opts.compress == nil then opts.compress = true end
+    if opts.compress and opts.force_deflate == nil then opts.force_deflate = true end
     if opts.level == nil then opts.level = 6 end
     local zw, err = ZipWriter.new(out_zip, opts)
     if not zw then return nil, err end

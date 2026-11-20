@@ -195,6 +195,13 @@ function output.show() end
 ---@param title string
 ---@param text string
 function output.report(title, text) end
+---Shows rows as a sortable grid on the Table tab (click a column header to sort,
+---click again to reverse) and opens the panel on it; replaces whatever the grid
+---held before. `rows` is keyed by the names in `columns` - the same shape
+---`db:query` returns, so its two results can be passed straight through.
+---@param columns string[]
+---@param rows table<string, boolean|number|string|nil>[]
+function output.table(columns, rows) end
 ---Closes the output panel; programs running in it keep running.
 function output.hide() end
 ---@return boolean

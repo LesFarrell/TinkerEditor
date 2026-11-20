@@ -201,7 +201,7 @@ These write to the output panel docked under the editor (View → Output Panel).
 | `output.clear()` | Empties the Output tab. |
 | `output.show()` | Opens the panel on the Output tab, without moving the keyboard focus. |
 | `output.report(title, text)` | Appends `text` under a coloured heading naming the report and the document ("Grammar Checker - notes.md"), followed by a blank line, and opens the panel. Tinker Editor's bundled plugins show their longer reports this way. |
-| `output.table(columns, rows)` | Shows `rows` as a sortable grid on the Table tab (click a column header to sort, click again to reverse) and opens the panel on it. `columns` is an array of names; `rows` is an array of tables keyed by those names - the same shape [`db:query`](#sqlite) already returns, so its two results can be passed straight through. A cell is `nil`, a boolean, a number, or a string; numbers sort numerically, everything else sorts as text. Replaces whatever the grid held before. |
+| `output.table(columns, rows)` | Shows `rows` as a sortable grid on the Table tab (click a column header to sort, click again to reverse) and opens the panel on it. `columns` is an array of names; `rows` is an array of tables keyed by those names - the same shape [`db:query`](#sqlite) already returns, so its two results can be passed straight through. A cell is `nil`, a boolean, a number, or a string; numbers sort numerically, everything else sorts as text. Replaces whatever the grid held before. [`examples/word-frequency-grid.lua`](examples/word-frequency-grid.lua) is a minimal, self-contained example. |
 | `output.hide()` | Closes the panel, whichever tab it is showing. Programs running in it keep running. |
 | `output.visible()` | Returns `true` while the panel is open. |
 
@@ -515,7 +515,7 @@ return {
 
 [examples/themes.lua](examples/themes.lua) is a complete example: Solarized colours for both themes, built from one function, with in-between shades computed by a small `mix()` helper. Copy it to `%APPDATA%\tinkeredit\themes.lua` to try it. Folders in `plugins` without an `init.lua`, like `examples`, aren't loaded as plugins.
 
-[`examples/secret-message-lab.lua`](examples/secret-message-lab.lua), [`examples/document-personality.lua`](examples/document-personality.lua), [`examples/constraint-writer.lua`](examples/constraint-writer.lua), [`examples/anagrams`](examples/anagrams), and [`examples/sqlite-notes.lua`](examples/sqlite-notes.lua) are complete, working plugins written entirely with the API above. They're kept here, unloaded, as copy-to-try reference rather than bundled commands. Copy one into `%APPDATA%\tinkeredit\plugins` (or `portable-data\plugins` in portable mode) and reload plugins to make it load normally.
+[`examples/secret-message-lab.lua`](examples/secret-message-lab.lua), [`examples/document-personality.lua`](examples/document-personality.lua), [`examples/constraint-writer.lua`](examples/constraint-writer.lua), [`examples/anagrams`](examples/anagrams), [`examples/sqlite-notes.lua`](examples/sqlite-notes.lua), and [`examples/word-frequency-grid.lua`](examples/word-frequency-grid.lua) are complete, working plugins written entirely with the API above. They're kept here, unloaded, as copy-to-try reference rather than bundled commands. Copy one into `%APPDATA%\tinkeredit\plugins` (or `portable-data\plugins` in portable mode) and reload plugins to make it load normally.
 
 ## Customizing the menu bar
 
